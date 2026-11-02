@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::model::Severity;
 use crate::output::Format;
+use crate::packs::Profile;
 use crate::pipeline::UpdatePolicy;
 
 /// One SAST to run them all.
@@ -27,6 +28,8 @@ pub enum Command {
     Scan(ScanArgs),
     /// List the scanners sasteuuuh knows about: installed path, version, latest release.
     Tools(ToolsArgs),
+    /// Show what a directory holds and which Semgrep rule packs a scan of it would run.
+    Packs(PacksArgs),
 }
 
 /// Arguments of `scan`.
@@ -52,6 +55,11 @@ pub struct ScanArgs {
     #[arg(long = "semgrep-config", value_name = "CONFIG")]
     pub semgrep_configs: Vec<String>,
 
+    /// How many Semgrep packs the automatic selection takes: every non-style pack, or the
+    /// security ones only.
+    #[arg(long, value_enum, default_value_t = Profile::Exhaustive)]
+    pub semgrep_profile: Profile,
+
     /// Exit 1 when a finding is at or above this severity.
     #[arg(long, default_value = "info", value_name = "SEVERITY")]
     pub fail_on: Severity,
@@ -73,6 +81,18 @@ pub struct ScanArgs {
     pub no_dedup: bool,
 }
 
+/// Arguments of `packs`.
+#[derive(Debug, Args)]
+pub struct PacksArgs {
+    /// Directory to inspect.
+    #[arg(default_value = ".", value_name = "DIR")]
+    pub path: PathBuf,
+
+    /// Profile to select with.
+    #[arg(long, value_enum, default_value_t = Profile::Exhaustive)]
+    pub semgrep_profile: Profile,
+}
+
 /// Arguments of `tools`.
 #[derive(Debug, Args)]
 pub struct ToolsArgs {
@@ -90,7 +110,7 @@ mod tests {
         full.extend_from_slice(args);
         match Cli::try_parse_from(full).unwrap().command {
             Command::Scan(args) => args,
-            Command::Tools(_) => panic!("expected scan"),
+            other => panic!("expected scan: {other:?}"),
         }
     }
 
@@ -105,6 +125,7 @@ mod tests {
         assert_eq!(args.fail_on, Severity::Info);
         assert_eq!(args.timeout, 600);
         assert_eq!(args.update, UpdatePolicy::Ask);
+        assert_eq!(args.semgrep_profile, Profile::Exhaustive);
         assert!(!args.offline);
         assert!(!args.no_dedup);
     }
@@ -166,13 +187,33 @@ mod tests {
     }
 
     #[test]
+    fn packs_takes_a_directory_and_a_profile() {
+        match Cli::try_parse_from([
+            "sasteuuuh",
+            "packs",
+            "/tmp/x",
+            "--semgrep-profile",
+            "security",
+        ])
+        .unwrap()
+        .command
+        {
+            Command::Packs(args) => {
+                assert_eq!(args.path, PathBuf::from("/tmp/x"));
+                assert_eq!(args.semgrep_profile, Profile::Security);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn tools_has_an_offline_flag() {
         match Cli::try_parse_from(["sasteuuuh", "tools", "--offline"])
             .unwrap()
             .command
         {
             Command::Tools(args) => assert!(args.offline),
-            Command::Scan(_) => panic!("expected tools"),
+            other => panic!("expected tools: {other:?}"),
         }
     }
 

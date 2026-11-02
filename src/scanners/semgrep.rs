@@ -55,7 +55,7 @@ impl Scanner for Semgrep {
             "--metrics=off",
             "--disable-version-check",
         ]);
-        for config in &options.semgrep_configs {
+        for config in options.semgrep_configs() {
             args.push("--config".into());
             args.push(config.into());
         }
@@ -68,6 +68,24 @@ impl Scanner for Semgrep {
             ("SEMGREP_SEND_METRICS".into(), "off".into()),
             ("NO_COLOR".into(), "1".into()),
         ]
+    }
+
+    fn plan(&self, options: &ScanOptions) -> Option<String> {
+        let configs = options.semgrep_configs();
+        let source = if options.semgrep_configs.is_some() {
+            "as given".to_owned()
+        } else {
+            format!(
+                "{:?} profile for {}",
+                options.semgrep_profile,
+                options.detected.summary()
+            )
+        };
+        Some(format!(
+            "{} rule source(s), {source}: {}",
+            configs.len(),
+            configs.join(" ")
+        ))
     }
 
     fn interpret(&self, output: &Output) -> Outcome {
@@ -719,7 +737,8 @@ mod tests {
     #[test]
     fn scan_args_carry_every_config_and_end_with_the_target() {
         let options = ScanOptions {
-            semgrep_configs: vec!["p/rust".into(), "rules.yml".into()],
+            semgrep_configs: Some(vec!["p/rust".into(), "rules.yml".into()]),
+            ..ScanOptions::default()
         };
         let args: Vec<String> = Semgrep
             .scan_args(&options)
@@ -731,9 +750,31 @@ mod tests {
         assert!(args.contains(&"--metrics=off".to_owned()));
         assert_eq!(args.iter().filter(|a| *a == "--config").count(), 2);
         assert_eq!(args.last().map(String::as_str), Some("."));
-        assert_eq!(
-            ScanOptions::default().semgrep_configs,
-            vec!["p/default".to_owned()]
+        assert!(
+            Semgrep
+                .plan(&options)
+                .unwrap()
+                .contains("2 rule source(s), as given: p/rust rules.yml")
+        );
+
+        // Without an explicit list, the packs follow what the target holds.
+        let mut auto = ScanOptions::default();
+        auto.detected
+            .languages
+            .insert(crate::detect::Language::Python, 3);
+        let args: Vec<String> = Semgrep
+            .scan_args(&auto)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&"p/default".to_owned()));
+        assert!(args.contains(&"p/python".to_owned()));
+        assert!(!args.contains(&"p/golang".to_owned()));
+        assert!(
+            Semgrep
+                .plan(&auto)
+                .unwrap()
+                .contains("Exhaustive profile for python (3)")
         );
     }
 

@@ -185,10 +185,17 @@ pub fn scan(
 ) -> Result<Report, PipelineError> {
     let target = resolve_target(target)?;
     let scanners = select(&options.tools)?;
+    let mut options = options.clone();
+    options.scan.detected = crate::detect::detect(&target, crate::detect::DEFAULT_MAX_FILES);
+    deps.log(format!(
+        "target: {} — {}",
+        target.display(),
+        options.scan.detected.summary()
+    ));
     let mut runs = Vec::with_capacity(scanners.len());
     let mut findings = Vec::new();
     for scanner in &scanners {
-        let (run, found) = run_one(scanner.as_ref(), &target, options, deps);
+        let (run, found) = run_one(scanner.as_ref(), &target, &options, deps);
         runs.push(run);
         findings.extend(found);
     }
@@ -238,6 +245,9 @@ fn run_one(
         .max_output(options.max_output);
     for (key, value) in scanner.env() {
         inv = inv.env(key, value);
+    }
+    if let Some(plan) = scanner.plan(&options.scan) {
+        deps.log(format!("{name}: {plan}"));
     }
     deps.log(format!("{name}: scanning…"));
     let output = match deps.runner.run(&inv) {
@@ -789,6 +799,95 @@ mod tests {
             !text.contains("available"),
             "offline: no update talk: {text}"
         );
+    }
+
+    #[test]
+    fn semgrep_gets_the_packs_the_target_calls_for() {
+        let (_dir, path_var) = stub_path(&["semgrep"]);
+        let target = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(target.path().join(".github/workflows")).unwrap();
+        std::fs::write(target.path().join(".github/workflows/ci.yml"), b"on: push").unwrap();
+        std::fs::write(target.path().join("app.py"), b"print(1)").unwrap();
+        let runner = FakeRunner::new(scripted);
+        let mut prompter = FixedAnswer(false);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let options = Options {
+            tools: vec!["semgrep".into()],
+            ..Options::default()
+        };
+        scan(target.path(), &options, &mut deps).unwrap();
+        let scan_call = runner
+            .calls()
+            .into_iter()
+            .find(|c| tool_of(c) == "semgrep" && !is_version_call(c))
+            .unwrap();
+        let args: Vec<String> = scan_call
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        for pack in [
+            "p/default",
+            "p/python",
+            "p/django",
+            "p/github-actions",
+            "p/gitleaks",
+        ] {
+            assert!(args.contains(&pack.to_owned()), "{pack} missing: {args:?}");
+        }
+        assert!(!args.contains(&"p/golang".to_owned()));
+        let text = String::from_utf8(log).unwrap();
+        assert!(
+            text.contains("target: ")
+                && text.contains("python (1)")
+                && text.contains("github-actions"),
+            "{text}"
+        );
+        assert!(
+            text.contains("semgrep: ") && text.contains("rule source(s), Exhaustive profile"),
+            "{text}"
+        );
+
+        // An explicit list wins, whatever the target holds.
+        let runner = FakeRunner::new(scripted);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let explicit = Options {
+            tools: vec!["semgrep".into()],
+            scan: ScanOptions {
+                semgrep_configs: Some(vec!["rules.yml".into()]),
+                ..ScanOptions::default()
+            },
+            ..Options::default()
+        };
+        scan(target.path(), &explicit, &mut deps).unwrap();
+        let scan_call = runner
+            .calls()
+            .into_iter()
+            .find(|c| tool_of(c) == "semgrep" && !is_version_call(c))
+            .unwrap();
+        let args: Vec<String> = scan_call
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args.iter().filter(|a| *a == "--config").count(), 1);
+        assert!(args.contains(&"rules.yml".to_owned()));
     }
 
     #[test]

@@ -41,6 +41,8 @@ sasteuuuh/
 │   │                    # run → parse → dedup → Report
 │   ├── scanners/        # Scanner trait + registry; semgrep.rs, bearer.rs, luacheck.rs
 │   │                    # (args, env, output → findings, mise id) — pure glue
+│   ├── detect.rs        # languages + markers of the target from file names (no reads)
+│   ├── packs.rs         # measured Semgrep pack catalogue, selection by language/profile
 │   ├── exec.rs          # THE process boundary: argv list, scrubbed env, cwd, timeout, cap
 │   ├── update.rs        # mise front-end: which / latest / ls --json / use -g, UpdatePlan
 │   ├── dedup.rs         # exact + cross-tool (path, line, CWE) merge, sort worst first
@@ -188,6 +190,26 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
 - **Deduplication merges, it never discards**: the merged finding keeps the
   union of every list, fills what it lacked, and files the other tool's own
   fields under `tool:field` in `extra`.
+
+## Rule packs (what the scanners are given)
+
+- `src/packs.rs` is the Semgrep catalogue: every official registry pack that
+  is not empty for the OSS engine, not meta/test, not a strict subset of a
+  listed pack, not style-only — each with the languages or markers
+  (`src/detect.rs`) that call for it, a profile tier and the rule count
+  measured on 2026-11-02. The pipeline detects the target's languages once
+  and selects the packs; `sasteuuuh packs DIR` shows the selection.
+- **Re-measure before editing the catalogue**: the listing is
+  `https://semgrep.dev/api/registry/rulesets` (305 rulesets, with author,
+  languages and tags) and a pack's rules are
+  `https://semgrep.dev/c/p/<name>`; count rules per language anonymously
+  (what the OSS engine downloads), drop packs with 0 rules. Semgrep
+  deduplicates identical rule ids across `--config`s (measured: 3
+  overlapping packs, 0 duplicate findings), so overlap costs download time
+  only — selecting by language is what keeps a scan fast.
+- Bearer runs `--scanner sast,secrets`; Luacheck runs with the default
+  `std = max` and the project's `.luacheckrc`. A new scanner's adapter
+  documents its own "most exhaustive" invocation in its `scan_args`.
 
 ## Secure coding rules (the point of the project)
 

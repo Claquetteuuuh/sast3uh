@@ -162,6 +162,48 @@ fn unknown_tool_exits_3() {
 }
 
 #[test]
+fn packs_shows_the_target_languages_and_the_selected_packs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join(".github/workflows")).expect("mkdir");
+    std::fs::write(dir.path().join(".github/workflows/ci.yml"), b"on: push").expect("write");
+    std::fs::write(dir.path().join("app.py"), b"print(1)").expect("write");
+    std::fs::write(dir.path().join("index.ts"), b"export {}").expect("write");
+    bin()
+        .arg("packs")
+        .arg(dir.path())
+        .env("PATH", "")
+        .assert()
+        .code(0)
+        .stdout(
+            predicate::str::contains("python (1)")
+                .and(predicate::str::contains("typescript (1)"))
+                .and(predicate::str::contains("github-actions"))
+                .and(predicate::str::contains("p/default"))
+                .and(predicate::str::contains("p/python"))
+                .and(predicate::str::contains("p/javascript"))
+                .and(predicate::str::contains("p/github-actions"))
+                .and(predicate::str::contains("p/gitleaks"))
+                .and(predicate::str::contains("Exhaustive profile")),
+        );
+    bin()
+        .args(["packs", "--semgrep-profile", "security"])
+        .arg(dir.path())
+        .env("PATH", "")
+        .assert()
+        .code(0)
+        .stdout(
+            predicate::str::contains("Security profile")
+                .and(predicate::str::contains("p/replit-community").not()),
+        );
+    bin()
+        .arg("packs")
+        .arg(dir.path().join("missing"))
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("does not exist"));
+}
+
+#[test]
 fn tools_lists_every_known_scanner_even_with_an_empty_path() {
     bin()
         .args(["tools", "--offline"])

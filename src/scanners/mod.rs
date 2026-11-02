@@ -19,14 +19,31 @@ use crate::version::Version;
 /// Per-scan knobs the adapters read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanOptions {
-    /// Semgrep rule sources (`p/default`, a registry pack, a local rules file…).
-    pub semgrep_configs: Vec<String>,
+    /// Explicit Semgrep rule sources (`p/rust`, a rules file…). `None` selects packs from
+    /// [`ScanOptions::detected`] with [`crate::packs`].
+    pub semgrep_configs: Option<Vec<String>>,
+    /// How much noise the pack selection accepts.
+    pub semgrep_profile: crate::packs::Profile,
+    /// What the target holds, filled by the pipeline before the scanners run.
+    pub detected: crate::detect::Detected,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
         ScanOptions {
-            semgrep_configs: vec!["p/default".to_owned()],
+            semgrep_configs: None,
+            semgrep_profile: crate::packs::Profile::Exhaustive,
+            detected: crate::detect::Detected::default(),
+        }
+    }
+}
+
+impl ScanOptions {
+    /// The Semgrep `--config` values: the explicit list, else the packs the target calls for.
+    pub fn semgrep_configs(&self) -> Vec<String> {
+        match &self.semgrep_configs {
+            Some(configs) => configs.clone(),
+            None => crate::packs::configs(&self.detected, self.semgrep_profile),
         }
     }
 }
@@ -149,6 +166,10 @@ pub trait Scanner: Send + Sync {
     }
     /// Arguments that scan the current directory (the pipeline sets it to the target).
     fn scan_args(&self, options: &ScanOptions) -> Vec<OsString>;
+    /// One line on what the scan will use (rule packs…), for the log.
+    fn plan(&self, _options: &ScanOptions) -> Option<String> {
+        None
+    }
     /// Extra environment for the scan (on top of the allow-list in [`crate::exec`]).
     fn env(&self) -> Vec<(OsString, OsString)> {
         Vec::new()

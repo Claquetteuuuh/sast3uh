@@ -23,8 +23,15 @@ use crate::version::Version;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Bearer;
 
-/// What Bearer prints when the tree holds no file in a language it has rules for.
-const NO_RULES: &str = "0 rules found";
+/// What Bearer says when the tree holds no file in a language it has rules for: on stderr
+/// ("0 rules found for supported language") or, with a report format, in the report itself
+/// ("Zero rules found. A security report requires rules to function").
+fn says_no_rules(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("0 rules found")
+        || lower.contains("zero rules found")
+        || lower.contains("requires rules")
+}
 
 impl Scanner for Bearer {
     fn name(&self) -> &'static str {
@@ -68,6 +75,9 @@ impl Scanner for Bearer {
             "0",
             "--hide-progress-bar",
             "--disable-version-check",
+            // The SAST rules plus the secrets scanner: both of Bearer\'s engines.
+            "--scanner",
+            "sast,secrets",
         ])
     }
 
@@ -79,7 +89,7 @@ impl Scanner for Bearer {
         if output.timed_out {
             return Outcome::Failed(failure_reason(output));
         }
-        if output.stderr_text().contains(NO_RULES) {
+        if says_no_rules(&output.stderr_text()) || says_no_rules(&output.stdout_text()) {
             return Outcome::Skipped("no file in a language Bearer has rules for".to_owned());
         }
         if output.stdout_truncated {
@@ -541,6 +551,16 @@ mod tests {
     }
 
     #[test]
+    fn interpret_skips_when_the_report_itself_says_zero_rules() {
+        // Bearer 2.1.3 with a report format: nothing on stderr, the text in the report.
+        let report = b"\nSecurity Report\n\n=====================================\n\nZero rules found. A security report requires rules to function. Please check configuration.\n";
+        match Bearer.interpret(&output(Some(1), report, "")) {
+            Outcome::Skipped(reason) => assert!(reason.contains("no file"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn interpret_completes_fails_and_times_out() {
         match Bearer.interpret(&output(Some(0), FIXTURE, "")) {
             Outcome::Completed(parsed) => assert_eq!(parsed.findings.len(), 7),
@@ -577,5 +597,6 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--format", "json"]));
         assert!(args.windows(2).any(|w| w == ["--exit-code", "0"]));
         assert!(args.contains(&"--disable-version-check".to_owned()));
+        assert!(args.windows(2).any(|w| w == ["--scanner", "sast,secrets"]));
     }
 }

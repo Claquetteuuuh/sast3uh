@@ -11,6 +11,8 @@ fn main() -> ExitCode {
     // nosemgrep: rust.lang.security.args-os.args-os
     match sasteuuuh::run(std::env::args_os()) {
         Ok(code) => code,
+        // `sasteuuuh … | head`: the reader went away; that is not an error worth a line.
+        Err(err) if sasteuuuh::is_broken_pipe(&err) => ExitCode::from(sasteuuuh::EXIT_CLEAN),
         Err(err) => {
             eprintln!("sasteuuuh: {err:#}");
             ExitCode::from(sasteuuuh::EXIT_ERROR)

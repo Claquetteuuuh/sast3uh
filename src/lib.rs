@@ -21,9 +21,11 @@
 
 pub mod cli;
 pub mod dedup;
+pub mod detect;
 pub mod exec;
 pub mod model;
 pub mod output;
+pub mod packs;
 pub mod pipeline;
 pub mod prompt;
 pub mod scanners;
@@ -57,6 +59,15 @@ pub const EXIT_USAGE: u8 = 2;
 /// The scan could not run, or a scanner failed (the report is incomplete).
 pub const EXIT_ERROR: u8 = 3;
 
+/// `true` when `err` comes from writing to a closed pipe (`sasteuuuh … | head`).
+pub fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+    })
+}
+
 /// Parse `args` (the full argv, program name included) and run the matching command with the
 /// real process runner, the mise found on `PATH`, the terminal prompt and the standard streams.
 ///
@@ -83,6 +94,7 @@ where
     let offline = match &cli.command {
         Command::Scan(args) => args.offline,
         Command::Tools(args) => args.offline,
+        Command::Packs(_) => true,
     };
     let runner = RealRunner;
     let mut prompter = TerminalPrompter;
@@ -114,7 +126,44 @@ pub fn run_with(cli: Cli, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::
             pipeline::write_inventory(&infos, out).context("writing the tool inventory")?;
             Ok(ExitCode::from(EXIT_CLEAN))
         }
+        Command::Packs(args) => {
+            let target = pipeline::resolve_target(&args.path)
+                .with_context(|| format!("inspecting {}", args.path.display()))?;
+            let detected = detect::detect(&target, detect::DEFAULT_MAX_FILES);
+            write_packs(&target, &detected, args.semgrep_profile, out)
+                .context("writing the pack list")?;
+            Ok(ExitCode::from(EXIT_CLEAN))
+        }
     }
+}
+
+fn write_packs(
+    target: &std::path::Path,
+    detected: &detect::Detected,
+    profile: packs::Profile,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    writeln!(out, "{} — {}", target.display(), detected.summary())?;
+    let selected = packs::select(detected, profile);
+    writeln!(
+        out,
+        "{} Semgrep packs ({profile:?} profile):",
+        selected.len()
+    )?;
+    for pack in &selected {
+        let kind = format!("{:?}", pack.kind).to_lowercase();
+        writeln!(
+            out,
+            "  {:<42} {kind:<12} {:>5} rules  {}",
+            pack.config(),
+            pack.measured_rules,
+            pack.note
+        )?;
+    }
+    writeln!(
+        out,
+        "bearer: sast + secrets scanners · luacheck: std max (+ the project's .luacheckrc)"
+    )
 }
 
 fn scan(args: &ScanArgs, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::Result<ExitCode> {
@@ -122,12 +171,11 @@ fn scan(args: &ScanArgs, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::R
         .format
         .or_else(|| args.output.as_deref().and_then(Format::from_path))
         .unwrap_or(Format::Text);
-    let mut scan_options = ScanOptions::default();
-    if !args.semgrep_configs.is_empty() {
-        scan_options
-            .semgrep_configs
-            .clone_from(&args.semgrep_configs);
-    }
+    let scan_options = ScanOptions {
+        semgrep_configs: (!args.semgrep_configs.is_empty()).then(|| args.semgrep_configs.clone()),
+        semgrep_profile: args.semgrep_profile,
+        ..ScanOptions::default()
+    };
     let options = pipeline::Options {
         tools: args.tools.clone(),
         scan: scan_options,
@@ -384,6 +432,22 @@ mod tests {
     }
 
     #[test]
+    fn packs_lists_what_the_target_calls_for() {
+        let target = tempfile::tempdir().expect("tempdir");
+        std::fs::write(target.path().join("main.go"), b"package main").expect("write");
+        let cli = parse(&["sasteuuuh", "packs", target.path().to_str().expect("utf-8")]);
+        let runner = FakeRunner::new(|_| panic!("nothing must run"));
+        let (code, out, _) = drive(cli, &[], &runner);
+        assert_eq!(code, ExitCode::from(EXIT_CLEAN));
+        let text = String::from_utf8(out).expect("utf-8");
+        assert!(text.contains("go (1)"), "{text}");
+        assert!(text.contains("p/golang"), "{text}");
+        assert!(text.contains("p/default"), "{text}");
+        assert!(!text.contains("p/python"), "{text}");
+        assert!(text.contains("Exhaustive profile"), "{text}");
+    }
+
+    #[test]
     fn tools_lists_every_scanner() {
         let cli = parse(&["sasteuuuh", "tools", "--offline"]);
         let runner = FakeRunner::new(luacheck_runner);
@@ -398,6 +462,17 @@ mod tests {
         }
         assert!(text.contains("luacheck   1.2.0"), "{text}");
         assert!(text.contains("missing"), "{text}");
+    }
+
+    #[test]
+    fn broken_pipes_are_recognised_through_the_context_chain() {
+        let pipe = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+            .context("writing the report");
+        assert!(is_broken_pipe(&pipe));
+        let other = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::NotFound))
+            .context("writing the report");
+        assert!(!is_broken_pipe(&other));
+        assert!(!is_broken_pipe(&anyhow::anyhow!("plain")));
     }
 
     #[test]

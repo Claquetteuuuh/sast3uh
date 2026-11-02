@@ -23,6 +23,33 @@ one that fails marks the report incomplete (exit 3). The same problem
 reported by two scanners on the same line with a CWE in common is one
 finding, at the worst severity, with both tools listed.
 
+## Rule packs: exhaustive by default
+
+Semgrep is only as good as the rules it is given. sasteuuuh looks at what the
+target holds (languages from file names, notable files such as workflows,
+lockfiles, compose or Kubernetes manifests) and passes Semgrep every official
+registry pack that applies, from a catalogue measured against the registry:
+the curated multi-language sets (`p/default`, `p/security-audit`,
+`p/owasp-top-ten`, `p/cwe-top-25`, `p/gitlab`, `p/trailofbits`, `p/ci`…), the
+secrets packs (`p/secrets`, `p/gitleaks`), the injection packs (SQL, XSS,
+command injection, JWT, insecure transport), supply-chain and AI packs, and
+the language and framework packs of every language found (Python/Django/
+Flask, JavaScript/Node/Express/React, Java/FindSecBugs/Spring, Go, Ruby/
+Rails, PHP, C#, C/C++/Flawfinder, Rust, Terraform, Docker, Kubernetes,
+GitHub Actions…). Packs that are empty without a Pro login, meta or test
+packs, strict subsets and style-only packs are left out. Semgrep
+deduplicates a rule shared by several packs, so overlap never doubles a
+finding.
+
+- `--semgrep-profile exhaustive` (default): every non-style pack, including
+  the audit-oriented, community and correctness ones.
+- `--semgrep-profile security`: the security packs only — fewer findings.
+- `--semgrep-config <CONFIG>` (repeatable): your own list, no selection.
+- `sasteuuuh packs [DIR]`: what the selection would be, and why.
+
+Bearer runs both of its engines (`--scanner sast,secrets`); Luacheck runs
+with `std = max` and honours the project's `.luacheckrc`.
+
 ## What a finding carries
 
 Everything the scanner said: severity and confidence, rule id, title and
@@ -40,11 +67,13 @@ that keeps both tools' details.
 ```text
 sasteuuuh scan [DIR] [options]      # run every available scanner
 sasteuuuh tools [--offline]         # installed / latest version of each scanner
+sasteuuuh packs [DIR]               # languages found and Semgrep packs selected
 
   -f, --format <text|json|yaml|xml|html>   guessed from --output's extension
   -o, --output <FILE>                      atomic write; stdout otherwise
   -t, --tools <semgrep,bearer,luacheck>    subset, registry order
-      --semgrep-config <CONFIG>            repeatable (p/rust, rules.yml…)
+      --semgrep-config <CONFIG>            repeatable (p/rust, rules.yml…); replaces the selection
+      --semgrep-profile <exhaustive|security>  how many packs the selection takes (default: exhaustive)
       --fail-on <severity>                 exit 1 at or above (default: info)
       --timeout <seconds>                  per scanner (default: 600)
       --update <ask|always|never>          when a scanner is behind (default: ask)
