@@ -24,7 +24,7 @@ fn fixtures() -> PathBuf {
 /// Stub scanners on a private `PATH` (plus the system directories the stubs' `cat` needs).
 #[cfg(unix)]
 struct Stubs {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     path: std::ffi::OsString,
 }
 
@@ -44,12 +44,23 @@ impl Stubs {
                     "#!/bin/sh\ncase \"$1\" in version) echo 'bearer version 2.1.1, build x';; *) cat '{}';; esac\n",
                     fx.join("bearer/report.json").display()
                 ),
-                "luacheck" => format!(
+                // The same replay for the one on PATH and the one only mise knows about (its
+                // file name keeps it off PATH): the install path end to end.
+                "luacheck" | "luacheck-via-mise" => format!(
                     "#!/bin/sh\ncase \"$1\" in --version) cat '{}';; *) cat '{}'; exit 1;; esac\n",
                     fx.join("luacheck/version.txt").display(),
                     fx.join("luacheck/report.txt").display()
                 ),
                 "luacheck-broken" => "#!/bin/sh\ncase \"$1\" in --version) echo 'Luacheck: 1.2.0';; *) echo 'Critical error: boom'; exit 4;; esac\n".to_owned(),
+                // A luacheck that is not on PATH (its file name differs) and that `mise which`
+                // only reveals once `mise use` ran: the install path end to end.
+                // mise: `which` knows luacheck-via-mise after a `use`, `latest` answers for the
+                // three tools, `ls --json` says semgrep is managed as pipx:semgrep, `use`
+                // records what it was asked.
+                "mise" => format!(
+                    "#!/bin/sh\ncase \"$1\" in\n  which) if [ \"$2\" = luacheck ] && [ -f '{d}/mise-use.log' ]; then echo '{d}/luacheck-via-mise'; else echo \"mise ERROR $2 is not a mise bin\" >&2; exit 1; fi;;\n  latest) case \"$2\" in *semgrep*) echo 1.183.0;; *bearer*) echo 2.1.3;; *luacheck*) echo 1.2.0;; *) exit 1;; esac;;\n  ls) echo '{{\"pipx:semgrep\":[{{\"version\":\"1.163.0\",\"installed\":true}}]}}';;\n  use) echo \"$3\" >> '{d}/mise-use.log'; echo \"mise ~/.config/mise/config.toml tools: $3\";;\n  *) exit 2;;\nesac\n",
+                    d = dir.path().display()
+                ),
                 other => panic!("no stub for {other}"),
             };
             let name = tool.trim_end_matches("-broken");
@@ -59,7 +70,7 @@ impl Stubs {
         }
         let path = std::env::join_paths([dir.path(), Path::new("/usr/bin"), Path::new("/bin")])
             .expect("path");
-        Stubs { _dir: dir, path }
+        Stubs { dir, path }
     }
 }
 
@@ -328,6 +339,80 @@ fn no_dedup_keeps_every_finding() {
 
 #[cfg(unix)]
 #[test]
+fn an_outdated_scanner_is_updated_through_mise_with_update_always() {
+    let stubs = Stubs::new(&["semgrep", "mise"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    bin()
+        .args([
+            "scan", "--tools", "semgrep", "--update", "always", "--format", "json",
+        ])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(1)
+        .stderr(
+            predicate::str::contains("semgrep: 1.163.0 installed, 1.183.0 available")
+                .and(predicate::str::contains("tools: pipx:semgrep@1.183.0")),
+        );
+    let log = std::fs::read_to_string(stubs.dir.path().join("mise-use.log")).expect("mise use ran");
+    assert_eq!(
+        log.trim(),
+        "pipx:semgrep@1.183.0",
+        "the id mise already manages, pinned to the latest"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_missing_scanner_is_installed_through_mise_then_run() {
+    let stubs = Stubs::new(&["luacheck-via-mise", "mise"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let output = bin()
+        .args([
+            "scan", "--tools", "luacheck", "--update", "always", "--format", "json",
+        ])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("luacheck: installed at"))
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
+    assert_eq!(json["tools"][0]["status"]["state"], "completed", "{json}");
+    assert_eq!(json["tools"][0]["findings"], 6);
+    let log = std::fs::read_to_string(stubs.dir.path().join("mise-use.log")).expect("mise use ran");
+    assert_eq!(log.trim(), "ubi:lunarmodules/luacheck@1.2.0");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_interactive_run_never_installs_or_updates() {
+    let stubs = Stubs::new(&["semgrep", "mise"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    bin()
+        .args(["scan", "--tools", "semgrep,luacheck", "--format", "json"])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(1)
+        .stderr(
+            predicate::str::contains(
+                "semgrep: skipped; to do it later: mise use -g pipx:semgrep@1.183.0",
+            )
+            .and(predicate::str::contains(
+                "luacheck: skipped; to do it later: mise use -g ubi:lunarmodules/luacheck@1.2.0",
+            )),
+        );
+    assert!(
+        !stubs.dir.path().join("mise-use.log").exists(),
+        "stdin is not a terminal: no prompt, no change"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn tools_shows_installed_versions() {
     let stubs = Stubs::new(&["semgrep", "luacheck"]);
     bin()
@@ -338,4 +423,23 @@ fn tools_shows_installed_versions() {
         // Bearer is not stubbed: whatever the machine has (or not) is reported, so only the
         // stubbed lines are asserted.
         .stdout(predicate::str::contains("semgrep    1.163.0").and(predicate::str::contains("luacheck   1.2.0")).and(predicate::str::contains("\nbearer     ")));
+}
+
+#[cfg(unix)]
+#[test]
+fn tools_online_shows_latest_and_mise_ids() {
+    let stubs = Stubs::new(&["semgrep", "mise"]);
+    bin()
+        .arg("tools")
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(0)
+        .stdout(
+            predicate::str::contains("semgrep    1.163.0    1.183.0    outdated")
+                .and(predicate::str::contains("mise: pipx:semgrep"))
+                .and(predicate::str::contains(
+                    "luacheck   -          1.2.0      missing",
+                ))
+                .and(predicate::str::contains("mise: ubi:lunarmodules/luacheck")),
+        );
 }

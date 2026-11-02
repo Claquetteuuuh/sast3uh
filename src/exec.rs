@@ -31,6 +31,10 @@ const INHERITED_ENV: &[&str] = &[
     "SYSTEMROOT",
     "USERPROFILE",
     "LOCALAPPDATA",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
 ];
 
 /// A command to run.
@@ -244,6 +248,14 @@ pub fn run(inv: &Invocation) -> Result<Output, ExecError> {
         timed_out,
         duration: start.elapsed(),
     })
+}
+
+/// The variables of this process whose name starts with `prefix`, for a child that owns that
+/// namespace (`MISE_*` for mise). Everything else stays behind the allow-list.
+pub fn env_with_prefix(prefix: &str) -> Vec<(OsString, OsString)> {
+    std::env::vars_os()
+        .filter(|(name, _)| name.to_string_lossy().starts_with(prefix))
+        .collect()
 }
 
 fn inherited_env() -> impl Iterator<Item = (&'static OsStr, OsString)> {
@@ -472,6 +484,19 @@ mod tests {
         let out = run(&Invocation::new(sh()).args(["-c", "cat"])).unwrap();
         assert!(out.success());
         assert!(out.stdout.is_empty());
+    }
+
+    #[test]
+    fn env_with_prefix_only_returns_that_namespace() {
+        // cargo sets CARGO_* for the test process.
+        let cargo: Vec<_> = env_with_prefix("CARGO_");
+        assert!(!cargo.is_empty());
+        assert!(
+            cargo
+                .iter()
+                .all(|(k, _)| k.to_string_lossy().starts_with("CARGO_"))
+        );
+        assert!(env_with_prefix("DEFINITELY_NOT_SET_PREFIX_").is_empty());
     }
 
     #[test]

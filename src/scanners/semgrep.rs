@@ -10,7 +10,6 @@ use super::{
 };
 use crate::exec::Output;
 use crate::model::{Finding, Severity, normalize_reported_path};
-use crate::update::{UpdateContext, UpdatePlan};
 
 /// The Semgrep adapter.
 #[derive(Debug, Clone, Copy, Default)]
@@ -29,8 +28,8 @@ impl Scanner for Semgrep {
         "SAST, 30+ languages (rule packs)"
     }
 
-    fn github_repo(&self) -> &'static str {
-        "semgrep/semgrep"
+    fn mise_id(&self) -> &'static str {
+        "semgrep"
     }
 
     fn version_args(&self) -> Vec<OsString> {
@@ -74,28 +73,6 @@ impl Scanner for Semgrep {
             },
             Err(err) => Outcome::Failed(format!("{}; {err}", failure_reason(output))),
         }
-    }
-
-    fn update_plan(&self, ctx: &UpdateContext<'_>) -> UpdatePlan {
-        if ctx.find("pipx").is_some() {
-            return UpdatePlan::command(
-                format!("upgrade semgrep to {} with pipx", ctx.latest),
-                "pipx",
-                &["upgrade", "semgrep"],
-            );
-        }
-        if ctx.find("python3").is_some() {
-            let pin = format!("semgrep=={}", ctx.latest);
-            return UpdatePlan::command(
-                format!("upgrade semgrep to {} with pip", ctx.latest),
-                "python3",
-                &["-m", "pip", "install", "--user", "--upgrade", &pin],
-            );
-        }
-        UpdatePlan::manual(format!(
-            "install pipx, then `pipx install semgrep=={}` (https://semgrep.dev/docs/getting-started/quickstart)",
-            ctx.latest
-        ))
     }
 }
 

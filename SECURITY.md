@@ -44,7 +44,8 @@ prefer otherwise.
   blind indexing in library code (clippy denies them).
 - Every scanner is spawned with an argument list, never a shell string,
   with a scrubbed environment, a working directory, a timeout and an
-  output cap.
+  output cap. Scanners are installed and updated only through mise, only
+  after the user says yes on a terminal; sasteuuuh has no network code.
 - Every commit goes through pre-commit (secrets, lint, tests), Bearer,
   Grype, cargo-deny; every push through Semgrep; CI adds CodeQL, zizmor,
   Plumber, Dependency Review and OpenSSF Scorecard.

@@ -5,7 +5,6 @@ use std::ffi::OsString;
 use super::{Outcome, Parsed, ScanOptions, Scanner, failure_reason, os_args, tail};
 use crate::exec::Output;
 use crate::model::{Finding, Severity, normalize_reported_path};
-use crate::update::{UpdateContext, UpdatePlan};
 
 /// The Luacheck adapter.
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,8 +25,8 @@ impl Scanner for Luacheck {
         "Lua linter (globals, unused, syntax)"
     }
 
-    fn github_repo(&self) -> &'static str {
-        "lunarmodules/luacheck"
+    fn mise_id(&self) -> &'static str {
+        "ubi:lunarmodules/luacheck"
     }
 
     fn version_args(&self) -> Vec<OsString> {
@@ -71,23 +70,6 @@ impl Scanner for Luacheck {
             )),
             _ => Outcome::Failed(failure_reason(output)),
         }
-    }
-
-    fn update_plan(&self, ctx: &UpdateContext<'_>) -> UpdatePlan {
-        if ctx.find("luarocks").is_some() {
-            let pinned = ctx.latest.to_string();
-            return UpdatePlan::command(
-                format!("upgrade luacheck to {pinned} with LuaRocks"),
-                "luarocks",
-                &["install", "luacheck", &pinned],
-            );
-        }
-        UpdatePlan::manual(format!(
-            "download the standalone binary from https://github.com/lunarmodules/luacheck/releases/tag/v{} \
-             (verify its .asc signature) and replace {}",
-            ctx.latest,
-            ctx.installed_path.display()
-        ))
     }
 }
 

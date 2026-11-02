@@ -5,8 +5,9 @@
 sasteuuuh is a Rust CLI: a hardened wrapper that runs several static analysers
 (Semgrep, Bearer, Luacheck today) over a directory, parses what each one says,
 removes the duplicates and writes one report — text, JSON, YAML, XML or HTML —
-with one exit code. Before scanning it checks each scanner against its latest
-GitHub release and offers (asks) to update it. It runs other people's binaries
+with one exit code. Before scanning it checks each scanner against the newest
+version mise knows and offers (asks) to install or update it through mise —
+sasteuuuh never downloads anything itself. It runs other people's binaries
 on other people's code, so **a bug here is a security bug by default**.
 Security and the absence of regressions come first; features come second.
 
@@ -20,8 +21,8 @@ exists because something slipped through somewhere once.
 - **CLI**: clap (derive) · **errors**: anyhow at the edge, thiserror inside
 - **Serialisation**: serde / serde_json / serde-saphyr (YAML, safe Rust);
   XML and HTML are hand-written writers with escaping
-- **HTTP**: ureq over rustls (GitHub releases API, release assets) ·
-  **digests**: sha2
+- **Tool management**: mise (`which` / `latest` / `use -g`), driven as a
+  child process like any scanner — no HTTP client in the binary
 - **Tests**: `cargo test` — unit tests in each module, pipeline tests on a
   fake runner, end-to-end tests in `tests/` with assert_cmd + shell stubs
   that replay recorded fixtures (`tests/fixtures/<tool>/`)
@@ -36,12 +37,12 @@ sasteuuuh/
 │   ├── main.rs          # thin: argv → sasteuuuh::run → exit code
 │   ├── lib.rs           # run / run_with (injectable Deps), exit codes, --fail-on gate
 │   ├── cli.rs           # clap definition only — no behaviour
-│   ├── pipeline.rs      # locate → version → update (ask) → run → parse → dedup → Report
+│   ├── pipeline.rs      # locate (mise which → PATH) → version → install/update (ask) →
+│   │                    # run → parse → dedup → Report
 │   ├── scanners/        # Scanner trait + registry; semgrep.rs, bearer.rs, luacheck.rs
-│   │                    # (args, env, output → findings, update plan) — pure glue
+│   │                    # (args, env, output → findings, mise id) — pure glue
 │   ├── exec.rs          # THE process boundary: argv list, scrubbed env, cwd, timeout, cap
-│   ├── update.rs        # latest release (GitHub API), UpdatePlan/UpdateStep, checksum-
-│   │                    # verified release download, atomic install or cache fallback
+│   ├── update.rs        # mise front-end: which / latest / ls --json / use -g, UpdatePlan
 │   ├── dedup.rs         # exact + cross-tool (path, line, CWE) merge, sort worst first
 │   ├── model.rs         # Severity, Finding, ToolRun, Summary, Report, path normalisation
 │   ├── output/          # text, json, yaml, xml, html renderers + atomic file write
@@ -69,8 +70,9 @@ They are documented in `src/lib.rs` and asserted in `tests/cli.rs`.
 ### Adding a scanner
 
 1. `src/scanners/<tool>.rs`: a unit struct implementing `Scanner` — name,
-   binary, GitHub repo, version args, scan args (the target is the cwd, pass
-   `.`), `interpret` (exit code + stdout → `Outcome`), `update_plan`.
+   binary, mise id (check `mise registry`; else `aqua:owner/repo` or
+   `ubi:owner/repo`), version args, scan args (the target is the cwd, pass
+   `.`), `interpret` (exit code + stdout → `Outcome`).
 2. A pure `parse(bytes)` function tested on **recorded output** copied into
    `tests/fixtures/<tool>/report.*` and `version.txt` (run the real tool on
    a sample project once; never call it from a test).
@@ -189,11 +191,11 @@ finished. CI enforces **80 % line coverage** (`cargo llvm-cov
   destination and renamed over it (`output::write_atomically`,
   `update::place_binary`): a symlink at the destination is replaced, never
   followed. Never write to a path the scanned project controls.
-- **Updates ask first**: the prompt only appears on a terminal, a
-  non-interactive run never changes the machine, `--update always` is the
-  explicit opt-in. A release asset is verified against the release's
-  `checksums.txt` before it is touched; an unwritable destination leaves the
-  verified file in `~/.cache/sasteuuuh/` and prints the `sudo install` line.
+- **Installs and updates go through mise and ask first**: the prompt only
+  appears on a terminal, a non-interactive run never changes the machine (it
+  prints the `mise use -g` line instead), `--update always` is the explicit
+  opt-in. sasteuuuh has no HTTP client; mise is the only child that receives
+  `MISE_*` and `GITHUB_TOKEN`, and a scanner never does.
 - **Reports are output encoding**: XML and HTML escape every value, HTML
   ships a CSP with no script, and only `http(s)` URLs become links.
 - **Dependencies**: crates.io only, no git deps, license allow-list, no

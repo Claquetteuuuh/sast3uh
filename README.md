@@ -8,16 +8,20 @@ latest GitHub release and offers to update it.
 
 ## Scanners
 
-| Tool     | Covers                                                    | Update path                      |
-| -------- | --------------------------------------------------------- | -------------------------------- |
-| semgrep  | SAST, 30+ languages, rule packs (`p/default` by default)  | `pipx upgrade semgrep` (or pip)  |
-| bearer   | SAST + sensitive data: JS/TS, Python, Go, Java, Ruby, PHP | GitHub release, SHA-256 verified |
-| luacheck | Lua linter: globals, unused, syntax                       | `luarocks install luacheck <v>`  |
+| Tool     | Covers                                                    | mise id                     |
+| -------- | --------------------------------------------------------- | --------------------------- |
+| semgrep  | SAST, 30+ languages, rule packs (`p/default` by default)  | `semgrep`                   |
+| bearer   | SAST + sensitive data: JS/TS, Python, Go, Java, Ruby, PHP | `aqua:Bearer/bearer`        |
+| luacheck | Lua linter: globals, unused, syntax                       | `ubi:lunarmodules/luacheck` |
 
-A scanner that is not installed is skipped; one that fails marks the report
-incomplete (exit 3). The same problem reported by two scanners on the same
-line with a CWE in common is one finding, at the worst severity, with both
-tools listed.
+Scanners are installed and updated through [mise](https://mise.jdx.dev):
+sasteuuuh resolves each binary with `mise which` (falling back to `PATH`),
+asks `mise latest` for the newest version and runs `mise use -g <id>@<v>`
+when you say yes. It never downloads anything itself. A scanner that is
+missing is offered for install; one that is behind is offered for update;
+one that fails marks the report incomplete (exit 3). The same problem
+reported by two scanners on the same line with a CWE in common is one
+finding, at the worst severity, with both tools listed.
 
 ## Usage
 
@@ -39,10 +43,10 @@ sasteuuuh tools [--offline]         # installed / latest version of each scanner
 Exit codes: `0` clean · `1` findings at or above `--fail-on` · `2` usage
 error · `3` could not run or a scanner failed (the report is still written).
 
-The update prompt only appears on a terminal; a non-interactive run (CI, a
-pipe) never changes the machine. `--update always` does, and a binary whose
-directory is not writable is left, verified, in `~/.cache/sasteuuuh/` with
-the `sudo install` line to run.
+The install/update prompt only appears on a terminal; a non-interactive run
+(CI, a pipe) never changes the machine and prints the `mise use` command to
+run instead. `--update always` is the explicit opt-in; `--update never`
+only reports. Without mise on `PATH` there is no version check at all.
 
 ## How it stays safe
 
@@ -54,8 +58,9 @@ the `sudo install` line to run.
 - XML and HTML reports escape every value; the HTML page carries a
   Content-Security-Policy that forbids scripts and links only to
   `http(s)` URLs.
-- Release downloads are verified against the release's `checksums.txt`
-  before anything is installed; the install is an atomic rename.
+- No network code: version lookups and installs are mise's job (its aqua
+  backend verifies checksums), and mise is the only child that sees the
+  `MISE_*` / `GITHUB_TOKEN` variables.
 
 ## Development
 

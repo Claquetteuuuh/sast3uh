@@ -12,7 +12,6 @@ use std::ffi::OsString;
 
 use crate::exec::Output;
 use crate::model::Finding;
-use crate::update::{UpdateContext, UpdatePlan};
 use crate::version::Version;
 
 /// Per-scan knobs the adapters read.
@@ -74,8 +73,9 @@ pub trait Scanner: Send + Sync {
     fn binary(&self) -> &'static str;
     /// What it covers, for `sasteuuuh tools`.
     fn purpose(&self) -> &'static str;
-    /// `owner/repo` on GitHub, where releases are looked up.
-    fn github_repo(&self) -> &'static str;
+    /// The mise tool id that installs it (`semgrep`, `aqua:Bearer/bearer`…), used when mise
+    /// does not already manage the binary under another id.
+    fn mise_id(&self) -> &'static str;
     /// Arguments that print the version.
     fn version_args(&self) -> Vec<OsString>;
     /// Read the installed version from the output of [`Scanner::version_args`].
@@ -90,8 +90,6 @@ pub trait Scanner: Send + Sync {
     }
     /// Turn the captured output of a scan into findings.
     fn interpret(&self, output: &Output) -> Outcome;
-    /// How to bring the installed binary up to `ctx.latest`.
-    fn update_plan(&self, ctx: &UpdateContext<'_>) -> UpdatePlan;
 }
 
 /// Every scanner, in display order.
@@ -154,6 +152,11 @@ pub(crate) fn failure_reason_pub(output: &Output) -> String {
     failure_reason(output)
 }
 
+/// [`tail`] for sibling modules.
+pub(crate) fn tail_pub(text: &str, max_chars: usize) -> String {
+    tail(text, max_chars)
+}
+
 /// The output from its first `{` or `[` on: tools that print a banner before their JSON.
 pub(crate) fn first_json(bytes: &[u8]) -> &[u8] {
     bytes
@@ -200,6 +203,14 @@ mod tests {
         bins.sort_unstable();
         bins.dedup();
         assert_eq!(bins.len(), names.len());
+        for scanner in registry() {
+            assert_eq!(
+                crate::update::short_name(scanner.mise_id()),
+                scanner.binary(),
+                "{}",
+                scanner.name()
+            );
+        }
     }
 
     #[test]

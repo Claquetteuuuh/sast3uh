@@ -3,7 +3,8 @@
 //! A hardened wrapper that drives several static analysers (Semgrep, Bearer, Luacheck, more
 //! to come) over a directory, parses what each one says, removes the duplicates and writes a
 //! single report — text, JSON, YAML, XML or HTML — with a single exit code. Before scanning it
-//! checks each scanner against its latest release and offers to update it.
+//! checks each scanner against the latest version mise can install and offers to install or
+//! update it; sasteuuuh itself never touches the network.
 //!
 //! The crate is a library first: the binary in `main.rs` only calls [`run`], so every behaviour
 //! — argument parsing, scanning, rendering, exit codes — is covered by tests that never spawn
@@ -45,7 +46,7 @@ use crate::output::Format;
 use crate::pipeline::{Deps, UpdatePolicy};
 use crate::prompt::TerminalPrompter;
 use crate::scanners::ScanOptions;
-use crate::update::{Http, UreqHttp};
+use crate::update::Mise;
 
 /// Nothing at or above the gate.
 pub const EXIT_CLEAN: u8 = 0;
@@ -57,7 +58,7 @@ pub const EXIT_USAGE: u8 = 2;
 pub const EXIT_ERROR: u8 = 3;
 
 /// Parse `args` (the full argv, program name included) and run the matching command with the
-/// real process runner, HTTP client, terminal prompt and standard streams.
+/// real process runner, the mise found on `PATH`, the terminal prompt and the standard streams.
 ///
 /// `--help` and `--version` are handled here: clap reports them as errors that print to
 /// stdout and exit 0.
@@ -83,14 +84,14 @@ where
         Command::Scan(args) => args.offline,
         Command::Tools(args) => args.offline,
     };
-    let http = (!offline).then(UreqHttp::new);
     let runner = RealRunner;
     let mut prompter = TerminalPrompter;
     let path_var = std::env::var_os("PATH");
     let mut log = std::io::stderr().lock();
     let mut deps = Deps {
         runner: &runner,
-        http: http.as_ref().map(|h| -> &dyn Http { h }),
+        mise: Mise::detect(path_var.as_deref()),
+        online: !offline,
         prompter: &mut prompter,
         path_var: path_var.as_deref(),
         log: &mut log,
@@ -199,7 +200,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -340,7 +342,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: None,
             log: &mut log,
@@ -367,7 +370,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: None,
             log: &mut log,

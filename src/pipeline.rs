@@ -1,8 +1,8 @@
-//! The scan pipeline: locate each scanner, check its version, offer the update, run it, parse
-//! its output, merge everything into one report.
+//! The scan pipeline: locate each scanner, check its version, offer to install or update it
+//! through mise, run it, parse its output, merge everything into one report.
 //!
-//! Every side effect goes through [`Deps`] — the process runner, the HTTP client, the prompt,
-//! `PATH`, the log — so the whole flow is tested in-process with fakes.
+//! Every side effect goes through [`Deps`] — the process runner, mise, the prompt, `PATH`,
+//! the log — so the whole flow is tested in-process with fakes.
 
 use std::ffi::OsStr;
 use std::io::Write;
@@ -15,17 +15,17 @@ use crate::model::{Finding, Report, ToolRun, ToolStatus};
 use crate::prompt::Prompter;
 use crate::scanners::{self, Outcome, ScanOptions, Scanner};
 use crate::tools::find_in_path;
-use crate::update::{self, Http, StepResult, UpdateContext};
+use crate::update::{Mise, UpdatePlan};
 use crate::version::Version;
 
-/// What to do with an outdated scanner.
+/// What to do with a scanner that is missing or behind its latest version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum UpdatePolicy {
     /// Ask on the terminal (no in a non-interactive run).
     Ask,
-    /// Update without asking.
+    /// Install or update without asking.
     Always,
-    /// Never update; only say that a newer version exists.
+    /// Never touch the machine; only print the mise command that would.
     Never,
 }
 
@@ -40,7 +40,7 @@ pub struct Options {
     pub timeout: Duration,
     /// Per-stream capture cap.
     pub max_output: usize,
-    /// Update policy.
+    /// Install / update policy.
     pub update: UpdatePolicy,
     /// Deduplicate (see [`crate::dedup`]).
     pub dedup: bool,
@@ -63,8 +63,10 @@ impl Default for Options {
 pub struct Deps<'a> {
     /// Runs processes.
     pub runner: &'a dyn Runner,
-    /// Talks to GitHub; `None` means offline (no version check, no update).
-    pub http: Option<&'a dyn Http>,
+    /// mise, when installed; without it there is no version check, install or update.
+    pub mise: Option<Mise>,
+    /// `false` means offline: `mise latest` is never run, so nothing is installed or updated.
+    pub online: bool,
     /// Asks the user.
     pub prompter: &'a mut dyn Prompter,
     /// `PATH`.
@@ -76,7 +78,8 @@ pub struct Deps<'a> {
 impl std::fmt::Debug for Deps<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Deps")
-            .field("online", &self.http.is_some())
+            .field("mise", &self.mise)
+            .field("online", &self.online)
             .finish_non_exhaustive()
     }
 }
@@ -206,6 +209,14 @@ pub fn scan(
     ))
 }
 
+/// Where a scanner's binary is: the one mise manages first, then `PATH`.
+fn locate(scanner: &dyn Scanner, deps: &Deps<'_>) -> Option<PathBuf> {
+    deps.mise
+        .as_ref()
+        .and_then(|mise| mise.which(deps.runner, scanner.binary()))
+        .or_else(|| find_in_path(scanner.binary(), deps.path_var))
+}
+
 fn run_one(
     scanner: &dyn Scanner,
     target: &Path,
@@ -213,25 +224,12 @@ fn run_one(
     deps: &mut Deps<'_>,
 ) -> (ToolRun, Vec<Finding>) {
     let name = scanner.name();
-    let Some(path) = find_in_path(scanner.binary(), deps.path_var) else {
+    let Some(path) = locate(scanner, deps).or_else(|| offer_install(scanner, options, deps)) else {
         deps.log(format!("{name}: not installed, skipped"));
         return (skipped(name, None, "not installed"), Vec::new());
     };
-    let mut installed = installed_version(scanner, &path, deps.runner);
-    match installed {
-        Some(v) => deps.log(format!("{name} {v} ({})", path.display())),
-        None => deps.log(format!(
-            "{name}: cannot read its version ({})",
-            path.display()
-        )),
-    }
-    // Online, the latest release is always looked up — `--update never` only decides what
-    // happens when the tool is behind.
-    if let (Some(http), Some(current)) = (deps.http, installed)
-        && let Some(updated) = check_and_update(scanner, &path, current, http, options, deps)
-    {
-        installed = Some(updated);
-    }
+    let (path, installed) = refresh(scanner, path, options, deps);
+    let version = installed.map(|v| v.to_string());
 
     let mut inv = Invocation::new(&path)
         .args(scanner.scan_args(&options.scan))
@@ -242,7 +240,6 @@ fn run_one(
         inv = inv.env(key, value);
     }
     deps.log(format!("{name}: scanning…"));
-    let version = installed.map(|v| v.to_string());
     let output = match deps.runner.run(&inv) {
         Ok(output) => output,
         Err(err) => {
@@ -286,6 +283,39 @@ fn run_one(
     }
 }
 
+/// Read the installed version and, when mise knows a newer one, offer the update. Returns the
+/// binary to run and its version afterwards.
+fn refresh(
+    scanner: &dyn Scanner,
+    path: PathBuf,
+    options: &Options,
+    deps: &mut Deps<'_>,
+) -> (PathBuf, Option<Version>) {
+    let name = scanner.name();
+    let installed = installed_version(scanner, &path, deps.runner);
+    match installed {
+        Some(v) => deps.log(format!("{name} {v} ({})", path.display())),
+        None => deps.log(format!(
+            "{name}: cannot read its version ({})",
+            path.display()
+        )),
+    }
+    let Some(current) = installed else {
+        return (path, None);
+    };
+    if !offer_update(scanner, current, options, deps) {
+        return (path, installed);
+    }
+    // mise may have switched the global version to a new install directory.
+    let path = locate(scanner, deps).unwrap_or(path);
+    let now = installed_version(scanner, &path, deps.runner);
+    match now {
+        Some(v) => deps.log(format!("{name}: now {v} ({})", path.display())),
+        None => deps.log(format!("{name}: updated, version unreadable")),
+    }
+    (path, now.or(installed))
+}
+
 fn skipped(name: &str, version: Option<String>, reason: &str) -> ToolRun {
     ToolRun {
         tool: name.to_owned(),
@@ -319,80 +349,146 @@ fn installed_version(scanner: &dyn Scanner, path: &Path, runner: &dyn Runner) ->
         .and_then(|output| scanner.parse_version(&output))
 }
 
-/// Look the latest release up and, policy permitting, update. Returns the version installed
-/// after a successful update.
-fn check_and_update(
+/// The mise id to install `scanner` with: what mise already manages, else the adapter's default.
+fn mise_id(scanner: &dyn Scanner, mise: &Mise, runner: &dyn Runner) -> String {
+    mise.managed_id(runner, scanner.binary())
+        .unwrap_or_else(|| scanner.mise_id().to_owned())
+}
+
+/// A missing scanner: look its latest version up and, policy permitting, install it. Returns
+/// where it ended up.
+fn offer_install(scanner: &dyn Scanner, options: &Options, deps: &mut Deps<'_>) -> Option<PathBuf> {
+    let name = scanner.name();
+    let Some(mise) = deps.mise.clone() else {
+        deps.log(format!(
+            "{name}: not installed (install mise to let sasteuuuh install it: https://mise.jdx.dev)"
+        ));
+        return None;
+    };
+    if !deps.online {
+        deps.log(format!("{name}: not installed (offline: not installing)"));
+        return None;
+    }
+    let id = mise_id(scanner, &mise, deps.runner);
+    let latest = match mise.latest(deps.runner, &id) {
+        Ok(latest) => latest,
+        Err(err) => {
+            deps.log(format!(
+                "{name}: not installed, and mise cannot tell the latest version ({err})"
+            ));
+            return None;
+        }
+    };
+    let plan = UpdatePlan {
+        id,
+        version: latest,
+    };
+    let question = format!(
+        "{name} is not installed. Install {latest} with mise? ({})",
+        plan.command_line()
+    );
+    if !decide(options.update, &question, &plan, name, deps) {
+        return None;
+    }
+    match mise.use_global(deps.runner, &plan) {
+        Ok(detail) => deps.log(format!("{name}: {detail}")),
+        Err(err) => {
+            deps.log(format!("{name}: install failed: {err}"));
+            return None;
+        }
+    }
+    let located = locate(scanner, deps);
+    match &located {
+        Some(path) => deps.log(format!("{name}: installed at {}", path.display())),
+        None => deps.log(format!(
+            "{name}: installed, but not found afterwards (is mise activated in this shell?)"
+        )),
+    }
+    located
+}
+
+/// An installed scanner: look its latest version up and, policy permitting, update it. Returns
+/// `true` when an update ran.
+fn offer_update(
     scanner: &dyn Scanner,
-    path: &Path,
     installed: Version,
-    http: &dyn Http,
     options: &Options,
     deps: &mut Deps<'_>,
-) -> Option<Version> {
+) -> bool {
     let name = scanner.name();
-    let latest = match update::latest_release(http, scanner.github_repo()) {
+    let Some(mise) = deps.mise.clone() else {
+        return false;
+    };
+    if !deps.online {
+        return false;
+    }
+    let id = mise_id(scanner, &mise, deps.runner);
+    let latest = match mise.latest(deps.runner, &id) {
         Ok(latest) => latest,
         Err(err) => {
             deps.log(format!("{name}: cannot check for updates ({err})"));
-            return None;
+            return false;
         }
     };
     if latest <= installed {
         deps.log(format!("{name}: up to date"));
-        return None;
+        return false;
     }
     deps.log(format!("{name}: {installed} installed, {latest} available"));
-    let ctx = UpdateContext {
-        tool: name,
-        installed_path: path,
-        installed,
-        latest,
-        path_var: deps.path_var,
+    let plan = UpdatePlan {
+        id,
+        version: latest,
     };
-    let plan = scanner.update_plan(&ctx);
-    if !plan.is_automatic() {
-        deps.log(format!("{name}: update by hand: {}", plan.describe()));
-        return None;
+    let question = format!(
+        "Update {name} {installed} → {latest} with mise? ({})",
+        plan.command_line()
+    );
+    if !decide(options.update, &question, &plan, name, deps) {
+        return false;
     }
-    let go = match options.update {
+    match mise.use_global(deps.runner, &plan) {
+        Ok(detail) => {
+            deps.log(format!("{name}: {detail}"));
+            true
+        }
+        Err(err) => {
+            deps.log(format!(
+                "{name}: update failed: {err}; scanning with {installed}"
+            ));
+            false
+        }
+    }
+}
+
+/// Apply the policy to a plan: `true` means run it.
+fn decide(
+    policy: UpdatePolicy,
+    question: &str,
+    plan: &UpdatePlan,
+    name: &str,
+    deps: &mut Deps<'_>,
+) -> bool {
+    match policy {
         UpdatePolicy::Always => true,
         UpdatePolicy::Never => {
             deps.log(format!(
-                "{name}: not updated (--update never); to update: {}",
-                plan.describe()
+                "{name}: not touched (--update never); to do it: {}",
+                plan.command_line()
             ));
-            return None;
+            false
         }
-        UpdatePolicy::Ask => deps.prompter.confirm(&format!(
-            "Update {name} {installed} → {latest}? ({})",
-            plan.describe()
-        )),
-    };
-    if !go {
-        deps.log(format!("{name}: update skipped, scanning with {installed}"));
-        return None;
-    }
-    for step in &plan.steps {
-        match update::execute(step, http, deps.runner, deps.path_var) {
-            Ok(StepResult::Done(detail)) => deps.log(format!("{name}: {detail}")),
-            Ok(StepResult::Manual(text)) => {
-                deps.log(format!("{name}: {text}"));
-                return None;
-            }
-            Err(err) => {
+        UpdatePolicy::Ask => {
+            if deps.prompter.confirm(question) {
+                true
+            } else {
                 deps.log(format!(
-                    "{name}: update failed: {err}; scanning with {installed}"
+                    "{name}: skipped; to do it later: {}",
+                    plan.command_line()
                 ));
-                return None;
+                false
             }
         }
     }
-    let now = installed_version(scanner, path, deps.runner);
-    match now {
-        Some(v) => deps.log(format!("{name}: now {v}")),
-        None => deps.log(format!("{name}: updated, version unreadable")),
-    }
-    now
 }
 
 /// One line of `sasteuuuh tools`.
@@ -406,33 +502,47 @@ pub struct ToolInfo {
     pub path: Option<PathBuf>,
     /// Installed version, when readable.
     pub installed: Option<Version>,
-    /// Latest release, when looked up.
+    /// The mise id that installs or updates it.
+    pub mise_id: String,
+    /// Latest version mise can install, when looked up.
     pub latest: Option<Version>,
     /// Why `latest` is missing, when it is.
     pub note: Option<String>,
 }
 
-/// What is installed and what upstream has, for every scanner.
+/// What is installed and what mise has, for every scanner.
 pub fn inventory(deps: &mut Deps<'_>) -> Vec<ToolInfo> {
     scanners::registry()
         .iter()
         .map(|scanner| {
-            let path = find_in_path(scanner.binary(), deps.path_var);
+            let path = locate(scanner.as_ref(), deps);
             let installed = path
                 .as_deref()
                 .and_then(|p| installed_version(scanner.as_ref(), p, deps.runner));
-            let (latest, note) = match deps.http {
-                None => (None, Some("offline".to_owned())),
-                Some(http) => match update::latest_release(http, scanner.github_repo()) {
-                    Ok(v) => (Some(v), None),
-                    Err(err) => (None, Some(err.to_string())),
-                },
+            let (mise_id, latest, note) = match (&deps.mise, deps.online) {
+                (None, _) => (
+                    scanner.mise_id().to_owned(),
+                    None,
+                    Some("mise not installed".to_owned()),
+                ),
+                (Some(mise), online) => {
+                    let id = mise_id(scanner.as_ref(), mise, deps.runner);
+                    if online {
+                        match mise.latest(deps.runner, &id) {
+                            Ok(v) => (id, Some(v), None),
+                            Err(err) => (id, None, Some(err.to_string())),
+                        }
+                    } else {
+                        (id, None, Some("offline".to_owned()))
+                    }
+                }
             };
             ToolInfo {
                 name: scanner.name(),
                 purpose: scanner.purpose(),
                 path,
                 installed,
+                mise_id,
                 latest,
                 note,
             }
@@ -440,7 +550,7 @@ pub fn inventory(deps: &mut Deps<'_>) -> Vec<ToolInfo> {
         .collect()
 }
 
-/// Print the inventory, one line per scanner.
+/// Print the inventory, two lines per scanner.
 ///
 /// # Errors
 ///
@@ -475,7 +585,7 @@ pub fn write_inventory(infos: &[ToolInfo], out: &mut impl Write) -> std::io::Res
             "{:<10} {installed:<10} {latest:<10} {status:<12} {detail}",
             info.name
         )?;
-        writeln!(out, "{:<10} {}", "", info.purpose)?;
+        writeln!(out, "{:<10} {} · mise: {}", "", info.purpose, info.mise_id)?;
     }
     Ok(())
 }
@@ -486,7 +596,6 @@ mod tests {
     use crate::exec::test_support::{FakeRunner, output};
     use crate::exec::{ExecError, Output};
     use crate::prompt::FixedAnswer;
-    use crate::update::test_support::FakeHttp;
     use std::ffi::OsString;
 
     const SEMGREP: &[u8] = include_bytes!("../tests/fixtures/semgrep/report.json");
@@ -517,17 +626,54 @@ mod tests {
             .is_some_and(|a| a == "--version" || a == "version")
     }
 
-    /// Answers version calls and scans with the recorded fixtures.
+    fn arg(inv: &Invocation, i: usize) -> String {
+        inv.args
+            .get(i)
+            .map(|a| a.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Scripted mise: nothing managed, latest known for the three tools, `use` succeeds.
+    fn mise_script(inv: &Invocation) -> Output {
+        match arg(inv, 0).as_str() {
+            "which" => output(Some(1), b"", "mise ERROR not a mise bin"),
+            "ls" => output(Some(0), b"{}", ""),
+            "latest" => {
+                let id = arg(inv, 1);
+                let version: &[u8] = if id.contains("semgrep") {
+                    b"1.183.0\n"
+                } else if id.contains("bearer") {
+                    b"2.1.1\n"
+                } else if id.contains("luacheck") {
+                    b"1.2.0\n"
+                } else {
+                    return output(Some(1), b"", "mise ERROR unknown");
+                };
+                output(Some(0), version, "")
+            }
+            "use" => output(
+                Some(0),
+                format!("mise ~/.config/mise/config.toml tools: {}\n", arg(inv, 2)).as_bytes(),
+                "",
+            ),
+            _ => output(Some(2), b"", "unexpected mise call"),
+        }
+    }
+
+    /// Answers mise, version calls and scans with the recorded fixtures.
     // The signature is the runner's: a `Result`, even though this script never fails.
     #[allow(clippy::unnecessary_wraps)]
     fn scripted(inv: &Invocation) -> Result<Output, ExecError> {
         let tool = tool_of(inv);
+        if tool == "mise" {
+            return Ok(mise_script(inv));
+        }
         if is_version_call(inv) {
             return Ok(match tool.as_str() {
                 "semgrep" => output(Some(0), b"1.163.0\n", ""),
                 "bearer" => output(Some(0), b"bearer version 2.1.1, build abc\n", ""),
                 "luacheck" => output(Some(0), b"Luacheck: 1.2.0\nLua: 5.4\n", ""),
-                _ => output(Some(0), b"pipx 1.0.0\n", ""),
+                _ => output(Some(0), b"0.0.0\n", ""),
             });
         }
         Ok(match tool.as_str() {
@@ -538,20 +684,26 @@ mod tests {
         })
     }
 
-    fn latest_bodies() -> FakeHttp {
-        FakeHttp::default()
-            .with(
-                "https://api.github.com/repos/semgrep/semgrep/releases/latest",
-                br#"{"tag_name":"v1.183.0"}"#,
-            )
-            .with(
-                "https://api.github.com/repos/Bearer/bearer/releases/latest",
-                br#"{"tag_name":"v2.1.1"}"#,
-            )
-            .with(
-                "https://api.github.com/repos/lunarmodules/luacheck/releases/latest",
-                br#"{"tag_name":"v1.2.0"}"#,
-            )
+    // `Deps::mise` is an `Option`: the helper hands back exactly what the field takes.
+    #[allow(clippy::unnecessary_wraps)]
+    fn mise() -> Option<Mise> {
+        Some(Mise::at("/fake/mise"))
+    }
+
+    fn mise_calls(
+        runner: &FakeRunner<impl Fn(&Invocation) -> Result<Output, ExecError>>,
+    ) -> Vec<Vec<String>> {
+        runner
+            .calls()
+            .iter()
+            .filter(|c| tool_of(c) == "mise")
+            .map(|c| {
+                c.args
+                    .iter()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .collect()
     }
 
     #[test]
@@ -563,7 +715,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -585,17 +738,11 @@ mod tests {
             9 + 7 + 6
         );
         assert_eq!(report.tools[0].version.as_deref(), Some("1.163.0"));
-        assert!(
-            report.summary.duplicates_removed >= 1,
-            "bearer and semgrep both flag eval on line 7"
+        assert_eq!(
+            report.summary.duplicates_removed, 4,
+            "bearer and semgrep agree on four lines"
         );
-        assert_eq!(report.summary.total + report.summary.duplicates_removed, 22);
-        assert!(
-            report
-                .findings
-                .iter()
-                .any(|f| !f.also_reported_by.is_empty())
-        );
+        assert_eq!(report.summary.total, 18);
         assert_eq!(report.target, target.path().canonicalize().unwrap());
 
         // Every scan ran in the target with the scanner's own environment, after a version call.
@@ -625,15 +772,16 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_tool_is_skipped_and_the_rest_still_runs() {
+    fn a_missing_tool_is_skipped_without_mise_and_the_rest_still_runs() {
         let (_dir, path_var) = stub_path(&["luacheck"]);
         let target = tempfile::tempdir().unwrap();
         let runner = FakeRunner::new(scripted);
-        let mut prompter = FixedAnswer(false);
+        let mut prompter = FixedAnswer(true);
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: true,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -647,6 +795,60 @@ mod tests {
         );
         assert_eq!(report.tools[2].status, ToolStatus::Completed);
         assert_eq!(report.summary.total, 6);
+        let text = String::from_utf8(log).unwrap();
+        assert!(text.contains("install mise"), "{text}");
+    }
+
+    #[test]
+    fn mise_managed_binaries_win_over_path() {
+        let (dir, path_var) = stub_path(&["semgrep", "managed-semgrep"]);
+        let target = tempfile::tempdir().unwrap();
+        let managed = dir.path().join("managed-semgrep");
+        let managed_text = managed.display().to_string();
+        let runner = FakeRunner::new(move |inv| {
+            if tool_of(inv) == "mise" && arg(inv, 0) == "which" && arg(inv, 1) == "semgrep" {
+                return Ok(output(Some(0), format!("{managed_text}\n").as_bytes(), ""));
+            }
+            if tool_of(inv) == "managed-semgrep" {
+                return Ok(if is_version_call(inv) {
+                    output(Some(0), b"1.183.0\n", "")
+                } else {
+                    output(Some(0), SEMGREP, "")
+                });
+            }
+            scripted(inv)
+        });
+        let mut prompter = FixedAnswer(false);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: mise(),
+            online: true,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let options = Options {
+            tools: vec!["semgrep".into()],
+            ..Options::default()
+        };
+        let report = scan(target.path(), &options, &mut deps).unwrap();
+        assert_eq!(
+            report.tools[0].version.as_deref(),
+            Some("1.183.0"),
+            "the mise one, not PATH's 1.163.0"
+        );
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .any(|c| tool_of(c) == "managed-semgrep" && !is_version_call(c))
+        );
+        assert!(
+            String::from_utf8(log)
+                .unwrap()
+                .contains("semgrep: up to date")
+        );
     }
 
     #[test]
@@ -658,7 +860,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -704,7 +907,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -729,7 +933,7 @@ mod tests {
         let (_dir, path_var) = stub_path(&["bearer"]);
         let target = tempfile::tempdir().unwrap();
         let runner = FakeRunner::new(|inv| {
-            if is_version_call(inv) {
+            if is_version_call(inv) || tool_of(inv) == "mise" {
                 return scripted(inv);
             }
             Ok(output(
@@ -742,7 +946,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -763,7 +968,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -782,10 +988,9 @@ mod tests {
     }
 
     #[test]
-    fn an_outdated_tool_is_updated_only_when_allowed() {
-        let (dir, path_var) = stub_path(&["semgrep", "pipx"]);
+    fn an_outdated_tool_is_updated_through_mise_only_when_allowed() {
+        let (_dir, path_var) = stub_path(&["semgrep"]);
         let target = tempfile::tempdir().unwrap();
-        let http = latest_bodies();
 
         let run_with = |policy: UpdatePolicy, answer: bool| {
             let runner = FakeRunner::new(scripted);
@@ -793,7 +998,8 @@ mod tests {
             let mut log = Vec::new();
             let mut deps = Deps {
                 runner: &runner,
-                http: Some(&http),
+                mise: mise(),
+                online: true,
                 prompter: &mut prompter,
                 path_var: Some(&path_var),
                 log: &mut log,
@@ -804,11 +1010,10 @@ mod tests {
                 ..Options::default()
             };
             scan(target.path(), &options, &mut deps).unwrap();
-            let updated = runner
-                .calls()
-                .iter()
-                .any(|c| tool_of(c) == "pipx" && c.args == vec!["upgrade", "semgrep"]);
-            (updated, String::from_utf8(log).unwrap())
+            let used = mise_calls(&runner)
+                .into_iter()
+                .any(|c| c == ["use", "-g", "semgrep@1.183.0"]);
+            (used, String::from_utf8(log).unwrap())
         };
 
         let (updated, log) = run_with(UpdatePolicy::Ask, true);
@@ -817,10 +1022,14 @@ mod tests {
             log.contains("1.163.0 installed, 1.183.0 available"),
             "{log}"
         );
+        assert!(log.contains("tools: semgrep@1.183.0"), "{log}");
 
         let (updated, log) = run_with(UpdatePolicy::Ask, false);
         assert!(!updated, "{log}");
-        assert!(log.contains("update skipped"), "{log}");
+        assert!(
+            log.contains("skipped; to do it later: mise use -g semgrep@1.183.0"),
+            "{log}"
+        );
 
         let (updated, _) = run_with(UpdatePolicy::Always, false);
         assert!(updated);
@@ -832,52 +1041,19 @@ mod tests {
             "never still tells: {log}"
         );
         assert!(log.contains("--update never"), "{log}");
-        drop(dir);
     }
 
     #[test]
-    fn an_up_to_date_tool_or_a_failed_lookup_is_only_logged() {
-        let (_dir, path_var) = stub_path(&["bearer", "luacheck"]);
+    fn an_update_uses_the_id_mise_already_manages() {
+        let (_dir, path_var) = stub_path(&["semgrep"]);
         let target = tempfile::tempdir().unwrap();
-        let http = FakeHttp::default().with(
-            "https://api.github.com/repos/Bearer/bearer/releases/latest",
-            br#"{"tag_name":"v2.1.1"}"#,
-        );
-        let runner = FakeRunner::new(scripted);
-        let mut prompter = FixedAnswer(true);
-        let mut log = Vec::new();
-        let mut deps = Deps {
-            runner: &runner,
-            http: Some(&http),
-            prompter: &mut prompter,
-            path_var: Some(&path_var),
-            log: &mut log,
-        };
-        let report = scan(target.path(), &Options::default(), &mut deps).unwrap();
-        let text = String::from_utf8(log).unwrap();
-        assert!(text.contains("bearer: up to date"), "{text}");
-        assert!(
-            text.contains("luacheck: cannot check for updates"),
-            "{text}"
-        );
-        assert_eq!(
-            report
-                .tools
-                .iter()
-                .filter(|t| t.status == ToolStatus::Completed)
-                .count(),
-            2
-        );
-    }
-
-    #[test]
-    fn a_failed_update_falls_back_to_the_installed_version() {
-        let (_dir, path_var) = stub_path(&["semgrep", "pipx"]);
-        let target = tempfile::tempdir().unwrap();
-        let http = latest_bodies();
         let runner = FakeRunner::new(|inv| {
-            if tool_of(inv) == "pipx" {
-                return Ok(output(Some(1), b"", "No module named pipx"));
+            if tool_of(inv) == "mise" && arg(inv, 0) == "ls" {
+                return Ok(output(
+                    Some(0),
+                    br#"{"pipx:semgrep":[{"version":"1.163.0","installed":true}]}"#,
+                    "",
+                ));
             }
             scripted(inv)
         });
@@ -885,7 +1061,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: Some(&http),
+            mise: mise(),
+            online: true,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -894,40 +1071,214 @@ mod tests {
             tools: vec!["semgrep".into()],
             ..Options::default()
         };
+        scan(target.path(), &options, &mut deps).unwrap();
+        let calls = mise_calls(&runner);
+        assert!(
+            calls.contains(&vec!["latest".to_owned(), "pipx:semgrep".to_owned()]),
+            "{calls:?}"
+        );
+        assert!(
+            calls.contains(&vec![
+                "use".to_owned(),
+                "-g".to_owned(),
+                "pipx:semgrep@1.183.0".to_owned()
+            ]),
+            "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_tool_is_installed_through_mise_then_scanned() {
+        let (dir, path_var) = stub_path(&["luacheck-from-mise"]);
+        let target = tempfile::tempdir().unwrap();
+        let installed = dir.path().join("luacheck-from-mise");
+        let installed_text = installed.display().to_string();
+        let used = std::cell::Cell::new(false);
+        let runner = FakeRunner::new(|inv| {
+            if tool_of(inv) == "mise" && arg(inv, 0) == "which" && arg(inv, 1) == "luacheck" {
+                // Only resolvable once `mise use` ran.
+                return Ok(if used.get() {
+                    output(Some(0), format!("{installed_text}\n").as_bytes(), "")
+                } else {
+                    output(Some(1), b"", "mise ERROR luacheck is not a mise bin")
+                });
+            }
+            if tool_of(inv) == "mise" && arg(inv, 0) == "use" {
+                used.set(true);
+            }
+            if tool_of(inv) == "luacheck-from-mise" {
+                return Ok(if is_version_call(inv) {
+                    output(Some(0), b"Luacheck: 1.2.0\n", "")
+                } else {
+                    output(Some(1), LUACHECK, "")
+                });
+            }
+            scripted(inv)
+        });
+        let mut prompter = FixedAnswer(true);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: mise(),
+            online: true,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let options = Options {
+            tools: vec!["luacheck".into()],
+            ..Options::default()
+        };
+        let report = scan(target.path(), &options, &mut deps).unwrap();
+        assert_eq!(
+            report.tools[0].status,
+            ToolStatus::Completed,
+            "{:?}",
+            report.tools[0]
+        );
+        assert_eq!(report.tools[0].findings, 6);
+        let calls = mise_calls(&runner);
+        assert!(
+            calls.contains(&vec![
+                "use".to_owned(),
+                "-g".to_owned(),
+                "ubi:lunarmodules/luacheck@1.2.0".to_owned()
+            ]),
+            "{calls:?}"
+        );
+        let text = String::from_utf8(log).unwrap();
+        assert!(text.contains("luacheck: installed at"), "{text}");
+    }
+
+    #[test]
+    fn a_missing_tool_is_only_announced_when_declined_offline_or_never() {
+        let (_dir, path_var) = stub_path(&[]);
+        let target = tempfile::tempdir().unwrap();
+        for (online, policy, answer, expect) in [
+            (
+                true,
+                UpdatePolicy::Ask,
+                false,
+                "skipped; to do it later: mise use -g aqua:Bearer/bearer@2.1.1",
+            ),
+            (
+                true,
+                UpdatePolicy::Never,
+                true,
+                "not touched (--update never)",
+            ),
+            (false, UpdatePolicy::Always, true, "offline: not installing"),
+        ] {
+            let runner = FakeRunner::new(scripted);
+            let mut prompter = FixedAnswer(answer);
+            let mut log = Vec::new();
+            let mut deps = Deps {
+                runner: &runner,
+                mise: mise(),
+                online,
+                prompter: &mut prompter,
+                path_var: Some(&path_var),
+                log: &mut log,
+            };
+            let options = Options {
+                tools: vec!["bearer".into()],
+                update: policy,
+                ..Options::default()
+            };
+            let report = scan(target.path(), &options, &mut deps).unwrap();
+            assert_eq!(
+                report.tools[0].status,
+                ToolStatus::Skipped {
+                    reason: "not installed".into()
+                }
+            );
+            assert!(
+                mise_calls(&runner).iter().all(|c| c[0] != "use"),
+                "{policy:?}: nothing installed"
+            );
+            let text = String::from_utf8(log).unwrap();
+            assert!(text.contains(expect), "{policy:?} online={online}: {text}");
+        }
+    }
+
+    #[test]
+    fn a_failed_update_or_install_falls_back_gracefully() {
+        let (_dir, path_var) = stub_path(&["semgrep"]);
+        let target = tempfile::tempdir().unwrap();
+        let runner = FakeRunner::new(|inv| {
+            if tool_of(inv) == "mise" && arg(inv, 0) == "use" {
+                return Ok(output(Some(1), b"", "mise ERROR failed to install"));
+            }
+            scripted(inv)
+        });
+        let mut prompter = FixedAnswer(true);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: mise(),
+            online: true,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let options = Options {
+            tools: vec!["semgrep".into(), "bearer".into()],
+            update: UpdatePolicy::Always,
+            ..Options::default()
+        };
         let report = scan(target.path(), &options, &mut deps).unwrap();
         let text = String::from_utf8(log).unwrap();
-        assert!(text.contains("update failed"), "{text}");
+        assert!(text.contains("semgrep: update failed"), "{text}");
+        assert!(text.contains("bearer: install failed"), "{text}");
         assert_eq!(
             report.tools[0].status,
             ToolStatus::Completed,
             "the scan still ran"
         );
         assert_eq!(report.tools[0].version.as_deref(), Some("1.163.0"));
+        assert_eq!(
+            report.tools[1].status,
+            ToolStatus::Skipped {
+                reason: "not installed".into()
+            }
+        );
     }
 
     #[test]
-    fn a_manual_only_update_is_printed_not_prompted() {
+    fn a_failed_latest_lookup_is_only_logged() {
         let (_dir, path_var) = stub_path(&["luacheck"]);
         let target = tempfile::tempdir().unwrap();
-        let http = FakeHttp::default().with(
-            "https://api.github.com/repos/lunarmodules/luacheck/releases/latest",
-            br#"{"tag_name":"v9.0.0"}"#,
-        );
-        let runner = FakeRunner::new(scripted);
+        let runner = FakeRunner::new(|inv| {
+            if tool_of(inv) == "mise" && arg(inv, 0) == "latest" {
+                return Ok(output(Some(1), b"", "mise ERROR network down"));
+            }
+            scripted(inv)
+        });
         let mut prompter = FixedAnswer(true);
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: Some(&http),
+            mise: mise(),
+            online: true,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
         };
-        scan(target.path(), &Options::default(), &mut deps).unwrap();
+        let options = Options {
+            tools: vec!["luacheck".into(), "bearer".into()],
+            ..Options::default()
+        };
+        let report = scan(target.path(), &options, &mut deps).unwrap();
         let text = String::from_utf8(log).unwrap();
-        assert!(text.contains("update by hand"), "{text}");
-        assert!(text.contains("releases/tag/v9.0.0"), "{text}");
-        assert_eq!(runner.calls().len(), 2, "version + scan, no update command");
+        assert!(
+            text.contains("luacheck: cannot check for updates"),
+            "{text}"
+        );
+        assert!(
+            text.contains("bearer: not installed, and mise cannot tell"),
+            "{text}"
+        );
+        assert_eq!(report.tools[1].status, ToolStatus::Completed);
     }
 
     #[test]
@@ -937,7 +1288,8 @@ mod tests {
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: None,
+            online: false,
             prompter: &mut prompter,
             path_var: None,
             log: &mut log,
@@ -956,15 +1308,15 @@ mod tests {
     }
 
     #[test]
-    fn inventory_reports_installed_latest_and_notes() {
+    fn inventory_reports_installed_latest_ids_and_notes() {
         let (dir, path_var) = stub_path(&["semgrep", "bearer"]);
-        let http = latest_bodies();
         let runner = FakeRunner::new(scripted);
         let mut prompter = FixedAnswer(false);
         let mut log = Vec::new();
         let mut deps = Deps {
             runner: &runner,
-            http: Some(&http),
+            mise: mise(),
+            online: true,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -977,8 +1329,10 @@ mod tests {
         );
         assert_eq!(infos[0].installed, Some(Version::new(1, 163, 0)));
         assert_eq!(infos[0].latest, Some(Version::new(1, 183, 0)));
+        assert_eq!(infos[0].mise_id, "semgrep");
         assert_eq!(infos[2].path, None);
         assert_eq!(infos[2].installed, None);
+        assert_eq!(infos[2].mise_id, "ubi:lunarmodules/luacheck");
         let mut out = Vec::new();
         write_inventory(&infos, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
@@ -994,10 +1348,12 @@ mod tests {
             text.contains("luacheck   -          1.2.0      missing"),
             "{text}"
         );
+        assert!(text.contains("mise: aqua:Bearer/bearer"), "{text}");
 
         let mut deps = Deps {
             runner: &runner,
-            http: None,
+            mise: mise(),
+            online: false,
             prompter: &mut prompter,
             path_var: Some(&path_var),
             log: &mut log,
@@ -1005,8 +1361,19 @@ mod tests {
         let offline = inventory(&mut deps);
         assert_eq!(offline[0].latest, None);
         assert_eq!(offline[0].note.as_deref(), Some("offline"));
+
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: true,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let no_mise = inventory(&mut deps);
+        assert_eq!(no_mise[0].note.as_deref(), Some("mise not installed"));
         let mut out = Vec::new();
-        write_inventory(&offline, &mut out).unwrap();
-        assert!(String::from_utf8(out).unwrap().contains("installed"));
+        write_inventory(&no_mise, &mut out).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("installed    "));
     }
 }

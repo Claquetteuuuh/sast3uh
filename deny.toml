@@ -36,8 +36,6 @@ allow = [
   "CC0-1.0",
   "BSL-1.0",
   "MPL-2.0",
-  # webpki-roots: the Mozilla CA bundle (data, not code) that rustls trusts.
-  "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 exceptions = []

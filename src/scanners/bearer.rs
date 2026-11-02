@@ -12,7 +12,6 @@ use super::{
 };
 use crate::exec::Output;
 use crate::model::{Finding, Severity, normalize_reported_path};
-use crate::update::{UpdateContext, UpdatePlan, UpdateStep};
 use crate::version::Version;
 
 /// The Bearer adapter.
@@ -35,8 +34,8 @@ impl Scanner for Bearer {
         "SAST + sensitive data (JS/TS, Python, Go, Java, Ruby, PHP)"
     }
 
-    fn github_repo(&self) -> &'static str {
-        "Bearer/bearer"
+    fn mise_id(&self) -> &'static str {
+        "aqua:Bearer/bearer"
     }
 
     fn version_args(&self) -> Vec<OsString> {
@@ -89,63 +88,6 @@ impl Scanner for Bearer {
             Err(err) => Outcome::Failed(format!("{}; {err}", failure_reason(output))),
         }
     }
-
-    fn update_plan(&self, ctx: &UpdateContext<'_>) -> UpdatePlan {
-        if ctx.find("brew").is_some() && ctx.installed_path.to_string_lossy().contains("/Cellar/") {
-            return UpdatePlan::command(
-                format!("upgrade bearer to {} with Homebrew", ctx.latest),
-                "brew",
-                &["upgrade", "bearer"],
-            );
-        }
-        match release_asset(std::env::consts::OS, std::env::consts::ARCH, &ctx.latest) {
-            Some(asset) => UpdatePlan {
-                summary: format!(
-                    "download bearer {} from GitHub releases, verify its SHA-256 against checksums.txt, replace {}",
-                    ctx.latest,
-                    ctx.installed_path.display()
-                ),
-                steps: vec![UpdateStep::ReleaseBinary {
-                    repo: self.github_repo().to_owned(),
-                    tag: format!("v{}", ctx.latest),
-                    asset,
-                    checksums_asset: "checksums.txt".to_owned(),
-                    member: Some(
-                        if std::env::consts::OS == "windows" {
-                            "bearer.exe"
-                        } else {
-                            "bearer"
-                        }
-                        .to_owned(),
-                    ),
-                    destination: ctx.installed_path.to_path_buf(),
-                }],
-            },
-            None => UpdatePlan::manual(format!(
-                "no prebuilt bearer {} for {}/{}: see https://docs.bearer.com/reference/installation/",
-                ctx.latest,
-                std::env::consts::OS,
-                std::env::consts::ARCH
-            )),
-        }
-    }
-}
-
-/// The release archive for this platform, following Bearer's naming
-/// (`bearer_2.1.3_linux_amd64.tar.gz`).
-pub fn release_asset(os: &str, arch: &str, version: &Version) -> Option<String> {
-    let os = match os {
-        "linux" => "linux",
-        "macos" => "darwin",
-        "windows" => "windows",
-        _ => return None,
-    };
-    let arch = match arch {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        _ => return None,
-    };
-    Some(format!("bearer_{version}_{os}_{arch}.tar.gz"))
 }
 
 #[derive(Deserialize)]
@@ -413,25 +355,6 @@ mod tests {
             .parse_version(&output(Some(0), b"", "bearer version 2.1.3, build abc"))
             .unwrap();
         assert_eq!(v, Version::new(2, 1, 3));
-    }
-
-    #[test]
-    fn release_assets_follow_bearers_naming() {
-        let v = Version::new(2, 1, 3);
-        assert_eq!(
-            release_asset("linux", "x86_64", &v).as_deref(),
-            Some("bearer_2.1.3_linux_amd64.tar.gz")
-        );
-        assert_eq!(
-            release_asset("macos", "aarch64", &v).as_deref(),
-            Some("bearer_2.1.3_darwin_arm64.tar.gz")
-        );
-        assert_eq!(
-            release_asset("windows", "x86_64", &v).as_deref(),
-            Some("bearer_2.1.3_windows_amd64.tar.gz")
-        );
-        assert_eq!(release_asset("freebsd", "x86_64", &v), None);
-        assert_eq!(release_asset("linux", "riscv64", &v), None);
     }
 
     #[test]
