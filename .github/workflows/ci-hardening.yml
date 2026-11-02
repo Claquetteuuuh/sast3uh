@@ -58,21 +58,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # The action uploads its own `plumber-report` artifact (JSON, PBOM, CycloneDX).
       - name: Run Plumber
         uses: getplumber/plumber@2342834dc0b67d2c87a33ac86789e481ad869402 # v0.7.17
         with:
           # Any finding fails.
           min-points: 100
           fail-warnings: true
-
-      - name: Upload Plumber report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: plumber-report
-          path: |
-            plumber-report.json
-            plumber-pbom.json
-            plumber-cyclonedx-sbom.json
-          retention-days: 14
-          if-no-files-found: ignore

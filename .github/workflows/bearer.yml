@@ -58,8 +58,19 @@ jobs:
           install -m 0755 "$tmp/bearer" /usr/local/bin/bearer
           bearer version
 
+      # With a report format, Bearer exits 1 when the tree has no file it has rules
+      # for ("0 rules found") — that is "nothing to scan", not a finding.
       - name: Run Bearer SAST scan
-        run: bearer scan . --severity critical,high --format sarif --output bearer-results.sarif
+        run: |
+          set -uo pipefail
+          bearer scan . --severity critical,high --format sarif --output bearer-results.sarif 2> bearer.stderr
+          code=$?
+          cat bearer.stderr
+          if [ "$code" -ne 0 ] && grep -q "0 rules found" bearer.stderr; then
+            echo "::notice::Bearer has no rules for the languages in this tree; nothing to scan"
+            exit 0
+          fi
+          exit "$code"
 
       - name: Upload SARIF to GitHub Security tab
         if: always()
