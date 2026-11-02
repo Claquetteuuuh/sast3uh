@@ -447,6 +447,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
+ "rustix",
  "serde",
  "serde-saphyr",
  "serde_json",

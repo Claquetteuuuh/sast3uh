@@ -4,7 +4,8 @@
 //! a shell), arguments as a list, an environment reduced to what a command-line tool needs, an
 //! explicit working directory, a wall-clock timeout and a cap on captured output. A tool that
 //! misbehaves — hangs, prints forever, inherits a token it should not see — is a bug in this
-//! module, not somewhere else.
+//! module, not somewhere else. On Unix the child starts its own process group and the timeout
+//! kills the whole group: a scanner's own subprocesses cannot outlive it holding the pipes.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -213,6 +214,12 @@ pub fn run(inv: &Invocation) -> Result<Output, ExecError> {
     if let Some(cwd) = &inv.cwd {
         command.current_dir(cwd);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // A new group whose id is the child's pid, so the timeout can kill it as a whole.
+        command.process_group(0);
+    }
 
     let start = Instant::now();
     let mut child = command.spawn().map_err(|source| ExecError::Spawn {
@@ -304,7 +311,7 @@ fn wait_with_timeout(
         if Instant::now() >= deadline {
             // Best effort: the child may already be gone, and a kill that fails leaves
             // nothing better to do than report the timeout.
-            let _killed = child.kill();
+            kill_tree(child);
             let status = child.wait().map_err(|source| ExecError::Wait {
                 program: program.to_path_buf(),
                 source,
@@ -333,6 +340,19 @@ impl Runner for RealRunner {
     fn run(&self, inv: &Invocation) -> Result<Output, ExecError> {
         run(inv)
     }
+}
+
+/// Kill the child and, on Unix, every process in its group (its own subprocesses).
+#[cfg(unix)]
+fn kill_tree(child: &mut Child) {
+    let pid = rustix::process::Pid::from_child(child);
+    let _group = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    let _direct = child.kill();
+}
+
+#[cfg(not(unix))]
+fn kill_tree(child: &mut Child) {
+    let _direct = child.kill();
 }
 
 #[cfg(test)]
@@ -422,17 +442,24 @@ mod tests {
     }
 
     #[test]
-    fn kills_the_child_past_the_timeout() {
+    fn kills_the_child_and_its_subprocesses_past_the_timeout() {
+        // `sleep` is not the last command, so `sh` forks it: a grandchild that holds the
+        // pipes open. Only a process-group kill ends the run in time.
         let started = Instant::now();
         let out = run(&Invocation::new(sh())
-            .args(["-c", "sleep 30"])
+            .args(["-c", "sleep 30; echo done"])
             .timeout(Duration::from_millis(200)))
         .unwrap();
         assert!(out.timed_out);
         assert!(!out.success());
         assert!(
+            out.stdout.is_empty(),
+            "nothing after the kill: {}",
+            out.stdout_text()
+        );
+        assert!(
             started.elapsed() < Duration::from_secs(10),
-            "the child was not killed"
+            "the child tree was not killed"
         );
     }
 
