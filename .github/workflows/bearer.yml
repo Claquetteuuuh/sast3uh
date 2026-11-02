@@ -59,21 +59,33 @@ jobs:
           bearer version
 
       # With a report format, Bearer exits 1 when the tree has no file it has rules
-      # for ("0 rules found") — that is "nothing to scan", not a finding.
+      # for — and writes "Zero rules found. A security report requires rules" into
+      # the output file instead of SARIF. That is "nothing to scan", not a finding.
       - name: Run Bearer SAST scan
         run: |
           set -uo pipefail
           bearer scan . --severity critical,high --format sarif --output bearer-results.sarif 2> bearer.stderr
           code=$?
           cat bearer.stderr
-          if [ "$code" -ne 0 ] && grep -q "0 rules found" bearer.stderr; then
+          no_rules='zero rules found|0 rules found|requires rules'
+          if [ "$code" -ne 0 ] && grep -qiE "$no_rules" bearer.stderr bearer-results.sarif 2>/dev/null; then
             echo "::notice::Bearer has no rules for the languages in this tree; nothing to scan"
+            rm -f bearer-results.sarif
             exit 0
           fi
           exit "$code"
 
-      - name: Upload SARIF to GitHub Security tab
+      - name: Keep only a real SARIF file
         if: always()
+        run: |
+          set -uo pipefail
+          if [ -f bearer-results.sarif ] && ! head -c 1 bearer-results.sarif | grep -q '{'; then
+            echo "bearer-results.sarif is not JSON; dropping it"
+            rm -f bearer-results.sarif
+          fi
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always() && hashFiles('bearer-results.sarif') != ''
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
