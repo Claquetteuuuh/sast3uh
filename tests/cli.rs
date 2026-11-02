@@ -195,7 +195,7 @@ fn scan_runs_the_stubs_merges_and_exits_1_on_findings() {
         .stdout
         .clone();
     let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
-    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["schema_version"], 2);
     assert_eq!(json["tools"].as_array().unwrap().len(), 3);
     assert!(
         json["tools"]
@@ -274,8 +274,8 @@ fn every_format_is_produced() {
     let dir = tempfile::tempdir().expect("tempdir");
     for (format, marker) in [
         ("text", "Summary:"),
-        ("json", "\"schema_version\": 1"),
-        ("yaml", "schema_version: 1"),
+        ("json", "\"schema_version\": 2"),
+        ("yaml", "schema_version: 2"),
         ("xml", "<?xml"),
         ("html", "<!doctype html>"),
     ] {

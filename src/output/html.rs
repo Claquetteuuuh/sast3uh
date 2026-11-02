@@ -1,5 +1,6 @@
 //! HTML: one self-contained page, no script, a CSP that forbids one, every value escaped.
 
+use std::fmt::Write as _;
 use std::io::Write;
 
 use crate::model::{Report, Severity, ToolStatus};
@@ -23,6 +24,12 @@ td.sev { font-weight: 700; text-transform: uppercase; white-space: nowrap; }
 code { font: 12px/1.4 ui-monospace, monospace; word-break: break-all; }
 .msg { color: var(--muted); }
 .failed { color: var(--high); font-weight: 600; }
+.chip { display: inline-block; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; margin: 2px 4px 2px 0; font-size: 12px; color: var(--muted); }
+pre { margin: 6px 0 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; overflow-x: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
+ol.flow { margin: 6px 0 0; padding-left: 20px; }
+tr.suppressed td { opacity: 0.55; }
+details { margin: 4px 0; } summary { cursor: pointer; color: var(--muted); }
+.refs a { margin-right: 8px; }
 @media (max-width: 700px) { th.opt, td.opt { display: none; } }
 ";
 
@@ -66,11 +73,22 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
     }
     writeln!(
         out,
+        "<li><b>{}</b>suppressed</li>",
+        report.summary.suppressed
+    )?;
+    writeln!(
+        out,
         "<li><b>{}</b>duplicates removed</li>",
         report.summary.duplicates_removed
     )?;
     writeln!(out, "</ul>")?;
 
+    write_tools(report, out)?;
+    write_findings(report, out)?;
+    writeln!(out, "</main></body></html>")
+}
+
+fn write_tools(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
     writeln!(out, "<h2>Tools</h2>")?;
     writeln!(
         out,
@@ -84,28 +102,70 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
                 format!(r#"<span class="failed">failed</span> — {}"#, escape(reason))
             }
         };
+        let mut notes = String::new();
+        if let Some(n) = run.scanned_files {
+            let _ = write!(notes, " · {n} files scanned");
+        }
+        if !run.skipped_paths.is_empty() || !run.diagnostics.is_empty() {
+            let _ = write!(
+                notes,
+                "<details><summary>{} skipped · {} diagnostics</summary><ul>",
+                run.skipped_paths.len(),
+                run.diagnostics.len()
+            );
+            for skipped in &run.skipped_paths {
+                let _ = write!(
+                    notes,
+                    "<li>skipped <code>{}</code>: {}</li>",
+                    escape(&skipped.path),
+                    escape(&skipped.reason)
+                );
+            }
+            for d in &run.diagnostics {
+                let rule = d
+                    .rule_id
+                    .as_deref()
+                    .map_or_else(String::new, |r| format!(" <code>{}</code>", escape(r)));
+                let path = d
+                    .path
+                    .as_deref()
+                    .map_or_else(String::new, |p| format!(" <code>{}</code>", escape(p)));
+                let _ = write!(
+                    notes,
+                    "<li>{}{rule}{path}: {}</li>",
+                    escape(&d.level),
+                    escape(&d.message)
+                );
+            }
+            notes.push_str("</ul></details>");
+        }
         writeln!(
             out,
-            r#"<tr><td>{}</td><td>{}</td><td>{status}</td><td>{}</td><td class="opt">{} ms</td></tr>"#,
+            r#"<tr><td>{}</td><td>{}</td><td>{status}{notes}</td><td>{}</td><td class="opt">{} ms</td></tr>"#,
             escape(&run.tool),
             escape(run.version.as_deref().unwrap_or("-")),
             run.findings,
             run.duration_ms
         )?;
     }
-    writeln!(out, "</tbody></table>")?;
+    writeln!(out, "</tbody></table>")
+}
 
+fn location_of(path: &std::path::Path, line: Option<u32>, column: Option<u32>) -> String {
+    match (line, column) {
+        (Some(line), Some(column)) => format!("{}:{line}:{column}", path.display()),
+        (Some(line), None) => format!("{}:{line}", path.display()),
+        _ => path.display().to_string(),
+    }
+}
+
+fn write_findings(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
     writeln!(out, "<h2>Findings ({})</h2>", report.summary.total)?;
     writeln!(
         out,
         "<table><thead><tr><th>Severity</th><th>Location</th><th>Tool</th><th>Rule</th><th class=\"opt\">CWE</th></tr></thead><tbody>"
     )?;
     for f in &report.findings {
-        let location = match (f.line, f.column) {
-            (Some(line), Some(column)) => format!("{}:{line}:{column}", f.path.display()),
-            (Some(line), None) => format!("{}:{line}", f.path.display()),
-            _ => f.path.display().to_string(),
-        };
         let tools = if f.also_reported_by.is_empty() {
             escape(&f.tool)
         } else {
@@ -123,19 +183,96 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
             ),
             None => escape(&f.rule_id),
         };
+        let mut body = format!(
+            "{rule}<br><b>{}</b><br><span class=\"msg\">{}</span>",
+            escape(&f.title),
+            escape(&f.message)
+        );
+        let chips: Vec<String> = f
+            .confidence
+            .iter()
+            .map(|c| format!("confidence {c}"))
+            .chain(f.owasp.iter().cloned())
+            .chain(f.categories.iter().cloned())
+            .chain(f.tags.iter().cloned())
+            .map(|c| format!(r#"<span class="chip">{}</span>"#, escape(&c)))
+            .collect();
+        if !chips.is_empty() {
+            body.push_str("<br>");
+            body.push_str(&chips.concat());
+        }
+        if let Some(snippet) = &f.snippet {
+            let _ = write!(body, "<pre>{}</pre>", escape(snippet));
+        }
+        if !f.flow.is_empty() {
+            body.push_str(r#"<ol class="flow">"#);
+            for step in &f.flow {
+                let content = step
+                    .content
+                    .as_deref()
+                    .map_or_else(String::new, |c| format!(" <code>{}</code>", escape(c)));
+                let _ = write!(
+                    body,
+                    "<li>{} <code>{}</code>{content}</li>",
+                    step.kind.as_str(),
+                    escape(&location_of(&step.path, step.line, step.column))
+                );
+            }
+            body.push_str("</ol>");
+        }
+        if let Some(fix) = &f.fix {
+            let _ = write!(
+                body,
+                "<details><summary>suggested fix</summary><pre>{}</pre></details>",
+                escape(fix)
+            );
+        }
+        let refs: Vec<String> = f
+            .references
+            .iter()
+            .filter_map(|r| safe_href(r))
+            .map(|href| {
+                format!(
+                    r#"<a href="{0}" rel="noopener noreferrer">{0}</a>"#,
+                    escape(href)
+                )
+            })
+            .collect();
+        if !refs.is_empty() {
+            let _ = write!(
+                body,
+                r#"<details class="refs"><summary>{} reference(s)</summary>{}</details>"#,
+                refs.len(),
+                refs.join(" ")
+            );
+        }
+        if !f.extra.is_empty() {
+            body.push_str("<details><summary>more from the scanner</summary><ul>");
+            for (key, value) in &f.extra {
+                let _ = write!(body, "<li><b>{}</b>: {}</li>", escape(key), escape(value));
+            }
+            body.push_str("</ul></details>");
+        }
         let cwes: Vec<String> = f.cwes.iter().map(|c| format!("CWE-{c}")).collect();
+        let row_class = if f.suppressed {
+            " class=\"suppressed\""
+        } else {
+            ""
+        };
+        let sev_label = if f.suppressed {
+            format!("{} (suppressed)", f.severity)
+        } else {
+            f.severity.to_string()
+        };
         writeln!(
             out,
-            r#"<tr><td class="sev {sev}">{sev}</td><td><code>{location}</code></td><td>{tools}</td><td>{rule}<br><b>{title}</b><br><span class="msg">{message}</span></td><td class="opt">{cwes}</td></tr>"#,
+            r#"<tr{row_class}><td class="sev {sev}">{sev_label}</td><td><code>{location}</code></td><td>{tools}</td><td>{body}</td><td class="opt">{cwes}</td></tr>"#,
             sev = f.severity,
-            location = escape(&location),
-            title = escape(&f.title),
-            message = escape(&f.message),
+            location = escape(&location_of(&f.path, f.line, f.column)),
             cwes = cwes.join(", ")
         )?;
     }
-    writeln!(out, "</tbody></table>")?;
-    writeln!(out, "</main></body></html>")
+    writeln!(out, "</tbody></table>")
 }
 
 #[cfg(test)]
@@ -168,6 +305,48 @@ mod tests {
             html.contains(r#"<td class="sev critical">critical</td>"#),
             "{html}"
         );
+        assert!(
+            html.contains(
+                r#"<tr class="suppressed"><td class="sev critical">critical (suppressed)</td>"#
+            ),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<span class="chip">confidence high</span>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<span class="chip">A03:2021 - Injection</span>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains("<pre>eval(req.query.code); // &lt;script&gt;</pre>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<li>source <code>src/app.js:5:25</code> <code>req</code></li>"),
+            "{html}"
+        );
+        assert!(
+            html.contains(
+                "<li>sink <code>src/app.js:7:3</code> <code>eval(code) &amp; co</code></li>"
+            ),
+            "{html}"
+        );
+        assert!(
+            html.contains("<summary>suggested fix</summary><pre>safeEval(code)</pre>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<li><b>bearer:description</b>: ## Description &lt;b&gt;</li>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<li>skipped <code>vendor/big.min.js</code>: too large &lt;1MB&gt;</li>"),
+            "{html}"
+        );
+        assert!(html.contains("<li>warn <code>rule.x</code> <code>src/app.js</code>: Internal matching error &amp; more</li>"), "{html}");
+        assert!(html.contains("<li><b>1</b>suppressed</li>"), "{html}");
         assert!(html.ends_with("</html>\n"));
     }
 
@@ -184,7 +363,13 @@ mod tests {
         );
         assert!(
             !html.contains("javascript:"),
-            "a javascript: url must not be linked: {html}"
+            "a javascript: url must not be linked, in references either: {html}"
+        );
+        assert!(
+            html.contains(
+                r#"<a href="https://owasp.org/x" rel="noopener noreferrer">https://owasp.org/x</a>"#
+            ),
+            "{html}"
         );
         assert!(
             html.contains("xss<br>"),

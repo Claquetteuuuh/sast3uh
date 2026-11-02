@@ -29,8 +29,11 @@ mod tests {
         let back: Report = serde_json::from_slice(&out).unwrap();
         assert_eq!(back, report);
         let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
-        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["schema_version"], 2);
         assert_eq!(value["summary"]["total"], 5);
+        assert_eq!(value["summary"]["suppressed"], 1);
+        assert_eq!(value["findings"][0]["flow"][0]["kind"], "source");
+        assert_eq!(value["tools"][0]["diagnostics"][0]["rule_id"], "rule.x");
         assert_eq!(value["findings"][0]["also_reported_by"][0], "bearer");
         assert_eq!(value["tools"][1]["status"]["state"], "skipped");
     }

@@ -23,6 +23,18 @@ one that fails marks the report incomplete (exit 3). The same problem
 reported by two scanners on the same line with a CWE in common is one
 finding, at the worst severity, with both tools listed.
 
+## What a finding carries
+
+Everything the scanner said: severity and confidence, rule id, title and
+message, file with line and column ranges, CWE and OWASP, categories and
+tags (PII groups, data types, technologies), the code snippet, a suggested
+fix, references and the rule link, the data flow from source to sink, the
+scanner's fingerprint, whether the code suppresses it (`nosemgrep`), and
+every other field under `extra` keyed by the scanner's own name. Each tool
+run also records the files it scanned or skipped and the diagnostics it
+raised (rules that errored). A finding two scanners agree on is one entry
+that keeps both tools' details.
+
 ## Usage
 
 ```text

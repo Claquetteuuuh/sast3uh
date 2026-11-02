@@ -30,7 +30,7 @@ mod tests {
         let mut out = Vec::new();
         render(&report, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("schema_version: 1"), "{text}");
+        assert!(text.contains("schema_version: 2"), "{text}");
         assert!(text.contains("severity: critical"), "{text}");
         let back: Report = serde_saphyr::from_str(&text).unwrap();
         assert_eq!(back, report);

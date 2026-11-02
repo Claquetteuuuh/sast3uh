@@ -151,28 +151,66 @@ pub(crate) fn safe_href(url: &str) -> Option<&str> {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use crate::model::{Finding, Report, Severity, ToolRun, ToolStatus};
+    use crate::model::{
+        Confidence, Diagnostic, Finding, FlowKind, FlowStep, Report, Severity, SkippedPath,
+        ToolRun, ToolStatus,
+    };
     use std::path::PathBuf;
 
-    /// A report with one finding per severity, hostile strings included, and three tools.
+    /// A report with one finding per severity, hostile strings included, a suppressed one,
+    /// and three tools with run details.
     pub(crate) fn sample_report() -> Report {
-        let finding = |tool: &str, rule: &str, severity: Severity, path: &str, line: u32| Finding {
-            tool: tool.into(),
-            also_reported_by: Vec::new(),
-            rule_id: rule.into(),
-            severity,
-            title: format!("{rule} title"),
-            message: format!("{rule} <message> & \"quotes\" 'single'"),
-            path: PathBuf::from(path),
-            line: Some(line),
-            end_line: Some(line),
-            column: Some(3),
-            cwes: vec![79, 95],
-            url: Some("https://example.com/rule".into()),
-            fingerprint: Some("fp".into()),
+        let finding = |tool: &str, rule: &str, severity: Severity, path: &str, line: u32| {
+            let mut f = Finding::new(
+                tool,
+                rule,
+                severity,
+                format!("{rule} title"),
+                format!("{rule} <message> & \"quotes\" 'single'"),
+                PathBuf::from(path),
+            );
+            f.line = Some(line);
+            f.end_line = Some(line);
+            f.column = Some(3);
+            f.end_column = Some(9);
+            f.cwes = vec![79, 95];
+            f.url = Some("https://example.com/rule".into());
+            f.fingerprint = Some("fp".into());
+            f
         };
         let mut merged = finding("semgrep", "eval", Severity::Critical, "src/app.js", 7);
         merged.also_reported_by = vec!["bearer".into()];
+        merged.confidence = Some(Confidence::High);
+        merged.owasp = vec!["A03:2021 - Injection".into()];
+        merged.categories = vec!["security".into(), "PII".into()];
+        merged.tags = vec!["express".into()];
+        merged.snippet = Some("eval(req.query.code); // <script>".into());
+        merged.fix = Some("safeEval(code)".into());
+        merged.references = vec!["https://owasp.org/x".into(), "javascript:alert(2)".into()];
+        merged.flow = vec![
+            FlowStep {
+                kind: FlowKind::Source,
+                path: PathBuf::from("src/app.js"),
+                line: Some(5),
+                column: Some(25),
+                end_line: None,
+                end_column: Some(28),
+                content: Some("req".into()),
+            },
+            FlowStep {
+                kind: FlowKind::Sink,
+                path: PathBuf::from("src/app.js"),
+                line: Some(7),
+                column: Some(3),
+                end_line: Some(7),
+                end_column: None,
+                content: Some("eval(code) & co".into()),
+            },
+        ];
+        merged.extra.insert("likelihood".into(), "LOW".into());
+        merged
+            .extra
+            .insert("bearer:description".into(), "## Description <b>".into());
         let mut hostile = finding("bearer", "xss", Severity::High, "src/<b>.js", 2);
         hostile.url = Some("javascript:alert(1)".into());
         hostile.message = "\u{0}control\u{7}".into();
@@ -180,47 +218,59 @@ pub(crate) mod test_support {
         no_location.line = None;
         no_location.end_line = None;
         no_location.column = None;
+        no_location.end_column = None;
         no_location.cwes = Vec::new();
         no_location.url = None;
         no_location.fingerprint = None;
+        let mut suppressed = finding(
+            "semgrep",
+            "nosemgrep-ed",
+            Severity::Critical,
+            "src/app.js",
+            9,
+        );
+        suppressed.suppressed = true;
         let findings = vec![
             merged,
             hostile,
             finding("semgrep", "csrf", Severity::Medium, "src/app.js", 2),
             no_location,
             finding("semgrep", "log", Severity::Info, "src/app.js", 6),
+            suppressed,
         ];
-        let tools = vec![
-            ToolRun {
-                tool: "semgrep".into(),
-                version: Some("1.163.0".into()),
-                status: ToolStatus::Completed,
-                findings: 9,
-                duration_ms: 1234,
+        let mut semgrep = ToolRun::new("semgrep", Some("1.163.0".into()), ToolStatus::Completed);
+        semgrep.findings = 9;
+        semgrep.duration_ms = 1234;
+        semgrep.scanned_files = Some(3);
+        semgrep.skipped_paths = vec![SkippedPath {
+            path: "vendor/big.min.js".into(),
+            reason: "too large <1MB>".into(),
+        }];
+        semgrep.diagnostics = vec![Diagnostic {
+            level: "warn".into(),
+            rule_id: Some("rule.x".into()),
+            path: Some("src/app.js".into()),
+            message: "Internal matching error & more".into(),
+        }];
+        let mut bearer = ToolRun::new(
+            "bearer",
+            Some("2.1.1".into()),
+            ToolStatus::Skipped {
+                reason: "no <supported> files".into(),
             },
-            ToolRun {
-                tool: "bearer".into(),
-                version: Some("2.1.1".into()),
-                status: ToolStatus::Skipped {
-                    reason: "no <supported> files".into(),
-                },
-                findings: 0,
-                duration_ms: 10,
+        );
+        bearer.duration_ms = 10;
+        let luacheck = ToolRun::new(
+            "luacheck",
+            None,
+            ToolStatus::Failed {
+                reason: "exit code 4".into(),
             },
-            ToolRun {
-                tool: "luacheck".into(),
-                version: None,
-                status: ToolStatus::Failed {
-                    reason: "exit code 4".into(),
-                },
-                findings: 0,
-                duration_ms: 0,
-            },
-        ];
+        );
         Report::new(
             PathBuf::from("/work/project"),
             "2026-11-02T12:00:00Z".into(),
-            tools,
+            vec![semgrep, bearer, luacheck],
             findings,
             3,
         )

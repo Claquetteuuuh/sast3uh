@@ -75,7 +75,9 @@ They are documented in `src/lib.rs` and asserted in `tests/cli.rs`.
    `.`), `interpret` (exit code + stdout → `Outcome`).
 2. A pure `parse(bytes)` function tested on **recorded output** copied into
    `tests/fixtures/<tool>/report.*` and `version.txt` (run the real tool on
-   a sample project once; never call it from a test).
+   a sample project once; never call it from a test), that keeps every
+   field — see "Parsing rules" — with a completeness test and a
+   tolerance test.
 3. Register it in `scanners::registry()`; `names()`/`by_name` follow.
 4. Add the stub to `tests/cli.rs` (`Stubs::new`) and extend the end-to-end
    assertions; `sasteuuuh tools` picks it up by itself.
@@ -155,6 +157,37 @@ finished. CI enforces **80 % line coverage** (`cargo llvm-cov
 - Tests may `unwrap`/`expect`/`panic`/index (`clippy.toml` allows it in
   `#[test]` bodies; an integration test crate adds the `#![allow]` at its
   top with the comment that is in `tests/cli.rs`).
+
+## Parsing rules (the heart of the project)
+
+The tool is worth exactly what its parsers keep. Every adapter follows these:
+
+- **Keep everything the scanner says.** What has a cross-tool meaning gets a
+  typed field of `Finding` (severity, confidence, CWE, OWASP, categories, tags,
+  location with end line/column, snippet, fix, references, data flow,
+  fingerprint, suppression); what is tool-specific goes verbatim into
+  `extra` under the scanner's own field name (unknown fields included, via
+  `#[serde(flatten)]`); what the tool says about its run — files scanned or
+  skipped, rules that errored — goes into `ToolRun` (`scanned_files`,
+  `skipped_paths`, `diagnostics`). Dropping a field is a bug.
+- **One bad entry never sinks the report.** Each result is deserialised on
+  its own; an unreadable one becomes a `warnings` entry that says which and
+  why. `null` where a list, string or flag is expected reads as empty
+  (`null_default`); a value that may be a string or a list reads through
+  `Strings`.
+- **Completeness is tested, not assumed.** Every fixture test checks that the
+  number of findings (plus warnings) equals the number of raw entries and
+  that every raw id is present; every tolerant path has a test with nulls,
+  wrong types and escaping paths.
+- **Fixtures are recorded output**, copied from a real run on a sample
+  project, never hand-written — with anything that looks like a live secret
+  redacted (`sk_live_<redacted-in-fixture>`): GitHub push protection blocks a
+  push that carries a key-shaped string, fake or not.
+- **Suppressed findings** (`nosemgrep`…) stay in the report flagged
+  `suppressed`, out of the counts and of the exit code.
+- **Deduplication merges, it never discards**: the merged finding keeps the
+  union of every list, fills what it lacked, and files the other tool's own
+  fields under `tool:field` in `extra`.
 
 ## Secure coding rules (the point of the project)
 

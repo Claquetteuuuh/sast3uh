@@ -5,8 +5,10 @@
 //! 1. **Exact duplicates** — same tool, rule, file, line and column — are dropped. A scanner
 //!    run twice over an overlapping path does this.
 //! 2. **Cross-tool duplicates** — two *different* tools flagging the same file and line with a
-//!    CWE in common — are merged into the first one seen: it keeps the worst severity, the
-//!    union of the CWEs, and lists the other tool in `also_reported_by`.
+//!    CWE in common — are merged into the first one seen: it keeps the worst severity and
+//!    confidence, the union of the CWEs, OWASP entries, categories, tags and references, fills
+//!    in what it lacked (snippet, fix, flow, link), keeps the other tool's own fields under a
+//!    `tool:field` key in `extra`, and lists that tool in `also_reported_by`. Nothing is lost.
 //!
 //! Two rules of the same tool on the same line are kept apart: they say different things.
 
@@ -105,20 +107,64 @@ fn merge_into(existing: &mut Finding, other: Finding) {
     if other.severity > existing.severity {
         existing.severity = other.severity;
     }
+    if other.confidence > existing.confidence {
+        existing.confidence = other.confidence;
+    }
+    // Suppressed only when every tool that saw it agrees it is.
+    existing.suppressed = existing.suppressed && other.suppressed;
     if !existing.also_reported_by.contains(&other.tool) {
-        existing.also_reported_by.push(other.tool);
+        existing.also_reported_by.push(other.tool.clone());
     }
     existing.cwes.extend(other.cwes);
     existing.cwes.sort_unstable();
     existing.cwes.dedup();
-    if existing.url.is_none() {
-        existing.url = other.url;
+    for (mine, theirs) in [
+        (&mut existing.owasp, other.owasp),
+        (&mut existing.categories, other.categories),
+        (&mut existing.tags, other.tags),
+        (&mut existing.references, other.references),
+    ] {
+        for item in theirs {
+            if !mine.contains(&item) {
+                mine.push(item);
+            }
+        }
     }
-    if existing.end_line.is_none() {
-        existing.end_line = other.end_line;
+    for (slot, value) in [
+        (&mut existing.url, other.url),
+        (&mut existing.snippet, other.snippet),
+        (&mut existing.fix, other.fix),
+        (&mut existing.fingerprint, other.fingerprint),
+    ] {
+        if slot.is_none() {
+            *slot = value;
+        }
     }
-    if existing.column.is_none() {
-        existing.column = other.column;
+    for (slot, value) in [
+        (&mut existing.end_line, other.end_line),
+        (&mut existing.column, other.column),
+        (&mut existing.end_column, other.end_column),
+    ] {
+        if slot.is_none() {
+            *slot = value;
+        }
+    }
+    if existing.flow.is_empty() {
+        existing.flow = other.flow;
+    }
+    existing
+        .extra
+        .insert(format!("{}:rule_id", other.tool), other.rule_id);
+    existing
+        .extra
+        .insert(format!("{}:title", other.tool), other.title);
+    existing
+        .extra
+        .insert(format!("{}:message", other.tool), other.message);
+    for (key, value) in other.extra {
+        existing
+            .extra
+            .insert(format!("{}:{key}", other.tool), value);
     }
 }
 
@@ -166,16 +212,25 @@ mod tests {
     }
 
     #[test]
-    fn different_tools_sharing_a_cwe_on_a_line_are_merged() {
-        let bearer = with_cwes(
+    fn different_tools_sharing_a_cwe_on_a_line_are_merged_without_loss() {
+        let mut bearer = with_cwes(
             finding("bearer", "js_eval", Severity::Critical, "src/a.js", 7),
             &[95],
         );
+        bearer.categories = vec!["PII".into()];
+        bearer.snippet = Some("eval(x)".into());
+        bearer.confidence = Some(crate::model::Confidence::High);
+        bearer
+            .extra
+            .insert("description".into(), "## Description".into());
+        bearer.suppressed = true;
         let mut semgrep = with_cwes(
             finding("semgrep", "eval-detected", Severity::Medium, "src/a.js", 7),
             &[95, 94],
         );
         semgrep.url = Some("https://semgrep.dev/r/x".into());
+        semgrep.categories = vec!["security".into()];
+        semgrep.confidence = Some(crate::model::Confidence::Low);
         let result = dedup(vec![semgrep, bearer]);
         assert_eq!(result.removed, 1);
         assert_eq!(result.findings.len(), 1);
@@ -183,8 +238,23 @@ mod tests {
         assert_eq!(merged.tool, "semgrep", "the first one seen is kept");
         assert_eq!(merged.also_reported_by, vec!["bearer".to_owned()]);
         assert_eq!(merged.severity, Severity::Critical, "worst severity wins");
+        assert_eq!(
+            merged.confidence,
+            Some(crate::model::Confidence::High),
+            "best confidence wins"
+        );
+        assert!(!merged.suppressed, "active for semgrep: active");
         assert_eq!(merged.cwes, vec![94, 95]);
+        assert_eq!(merged.categories, vec!["security", "PII"]);
+        assert_eq!(
+            merged.snippet.as_deref(),
+            Some("eval(x)"),
+            "filled from the other tool"
+        );
         assert_eq!(merged.url.as_deref(), Some("https://semgrep.dev/r/x"));
+        assert_eq!(merged.extra["bearer:rule_id"], "js_eval");
+        assert_eq!(merged.extra["bearer:description"], "## Description");
+        assert!(merged.extra.contains_key("bearer:message"));
     }
 
     #[test]

@@ -28,14 +28,51 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
             ToolStatus::Skipped { reason } => ("skipped", reason.clone()),
             ToolStatus::Failed { reason } => ("FAILED", reason.clone()),
         };
+        let mut details = Vec::new();
+        if let Some(n) = run.scanned_files {
+            details.push(format!("{n} file{} scanned", plural(n)));
+        }
+        if !run.skipped_paths.is_empty() {
+            details.push(format!("{} skipped by the tool", run.skipped_paths.len()));
+        }
+        if !run.diagnostics.is_empty() {
+            details.push(format!(
+                "{} diagnostic{}",
+                run.diagnostics.len(),
+                plural(run.diagnostics.len())
+            ));
+        }
+        let details = if details.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", details.join(" · "))
+        };
         writeln!(
             out,
-            "  {:<10} {:<10} {:<10} {detail}  [{}]",
+            "  {:<10} {:<10} {:<10} {detail}{details}  [{}]",
             run.tool,
             version,
             state,
             duration(run.duration_ms)
         )?;
+        for d in &run.diagnostics {
+            let rule = d
+                .rule_id
+                .as_deref()
+                .map_or_else(String::new, |r| format!(" [{r}]"));
+            let path = d
+                .path
+                .as_deref()
+                .map_or_else(String::new, |p| format!(" {p}:"));
+            writeln!(out, "             {}{rule}{path} {}", d.level, d.message)?;
+        }
+        for skipped in &run.skipped_paths {
+            writeln!(
+                out,
+                "             skipped {} ({})",
+                skipped.path, skipped.reason
+            )?;
+        }
     }
     writeln!(out)?;
     writeln!(
@@ -53,9 +90,10 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
         } else {
             format!(" (+{})", f.also_reported_by.join(", +"))
         };
+        let suppressed = if f.suppressed { " (suppressed)" } else { "" };
         writeln!(
             out,
-            "  {:<8} {}{line}{column}  {}{also}  [{}] {}",
+            "  {:<8} {}{line}{column}  {}{also}  [{}] {}{suppressed}",
             f.severity,
             f.path.display(),
             f.tool,
@@ -68,7 +106,12 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
         .iter()
         .map(|s| format!("{} {s}", report.summary.count(*s)))
         .collect();
-    writeln!(out, "Summary: {}", counts.join(" · "))
+    writeln!(
+        out,
+        "Summary: {} · {} suppressed",
+        counts.join(" · "),
+        report.summary.suppressed
+    )
 }
 
 fn plural(n: usize) -> &'static str {
@@ -94,7 +137,15 @@ mod tests {
         render(&sample_report(), &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(
-            text.contains("semgrep    1.163.0    completed  9 findings  [1.2s]"),
+            text.contains("semgrep    1.163.0    completed  9 findings · 3 files scanned · 1 skipped by the tool · 1 diagnostic  [1.2s]"),
+            "{text}"
+        );
+        assert!(
+            text.contains("warn [rule.x] src/app.js: Internal matching error & more"),
+            "{text}"
+        );
+        assert!(
+            text.contains("skipped vendor/big.min.js (too large <1MB>)"),
             "{text}"
         );
         assert!(
@@ -118,7 +169,13 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.ends_with("Summary: 1 critical · 1 high · 1 medium · 1 low · 1 info\n"),
+            text.contains("[nosemgrep-ed] nosemgrep-ed title (suppressed)"),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(
+                "Summary: 1 critical · 1 high · 1 medium · 1 low · 1 info · 1 suppressed\n"
+            ),
             "{text}"
         );
     }

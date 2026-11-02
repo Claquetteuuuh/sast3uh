@@ -10,8 +10,10 @@ pub mod semgrep;
 
 use std::ffi::OsString;
 
+use serde::{Deserialize, Deserializer};
+
 use crate::exec::Output;
-use crate::model::Finding;
+use crate::model::{Diagnostic, Finding, SkippedPath};
 use crate::version::Version;
 
 /// Per-scan knobs the adapters read.
@@ -32,13 +34,8 @@ impl Default for ScanOptions {
 /// What a scanner's output meant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// The scan ran and its output was parsed; `warnings` are non-fatal notes from the tool.
-    Completed {
-        /// The findings.
-        findings: Vec<Finding>,
-        /// Non-fatal notes (rules that errored, findings dropped for an invalid path…).
-        warnings: Vec<String>,
-    },
+    /// The scan ran and its output was parsed.
+    Completed(Parsed),
     /// The scan did not apply (nothing to scan).
     Skipped(String),
     /// The output is unusable.
@@ -56,13 +53,81 @@ pub enum ParseError {
     Empty,
 }
 
-/// Parsed output of one scanner.
+/// Parsed output of one scanner: the findings, and everything the tool said about the run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Parsed {
     /// The findings.
     pub findings: Vec<Finding>,
-    /// Non-fatal notes.
+    /// Notes from the parser itself: an entry it could not read, a finding dropped for an
+    /// invalid path. Each one is a result that did not make it into `findings`.
     pub warnings: Vec<String>,
+    /// How many files the tool scanned, when it says.
+    pub scanned_files: Option<usize>,
+    /// Files the tool chose not to scan, when it says.
+    pub skipped_paths: Vec<SkippedPath>,
+    /// What the tool reported about its own run (rules that errored…).
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Cap on a code snippet or a verbatim text kept in a finding, in characters.
+pub(crate) const TEXT_CAP: usize = 4000;
+
+/// A `null` where a list, a string or a flag is expected reads as empty rather than as an
+/// error: one odd field must not sink a whole report.
+pub(crate) fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// Strings out of whatever JSON the tool put there: a string, a number, a list of them, or
+/// nothing. Objects are ignored.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Strings(pub(crate) Vec<String>);
+
+impl<'de> Deserialize<'de> for Strings {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(Strings(strings_of(&value)))
+    }
+}
+
+fn strings_of(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Number(n) => vec![n.to_string()],
+        serde_json::Value::Bool(b) => vec![b.to_string()],
+        serde_json::Value::Array(items) => items.iter().flat_map(strings_of).collect(),
+        serde_json::Value::Null | serde_json::Value::Object(_) => Vec::new(),
+    }
+}
+
+/// The first `max_chars` characters of `text`, with an ellipsis when cut.
+pub(crate) fn cap(text: &str, max_chars: usize) -> String {
+    let mut out: String = text.chars().take(max_chars).collect();
+    if out.len() < text.len() {
+        out.push('…');
+    }
+    out
+}
+
+/// Add `value` to `list` unless empty or already there.
+pub(crate) fn push_unique(list: &mut Vec<String>, value: impl Into<String>) {
+    let value = value.into();
+    let trimmed = value.trim();
+    if !trimmed.is_empty() && !list.iter().any(|v| v == trimmed) {
+        list.push(trimmed.to_owned());
+    }
+}
+
+/// A JSON value as compact text, for [`Finding::extra`](crate::model::Finding::extra).
+pub(crate) fn value_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => cap(s, 1000),
+        other => cap(&other.to_string(), 1000),
+    }
 }
 
 /// A scanner sasteuuuh can drive.
@@ -241,6 +306,40 @@ mod tests {
         );
         assert_eq!(first_json(b"[1]"), b"[1]");
         assert_eq!(first_json(b"nothing"), b"");
+    }
+
+    #[test]
+    fn tolerant_helpers() {
+        #[derive(Deserialize)]
+        struct T {
+            #[serde(default, deserialize_with = "null_default")]
+            list: Vec<String>,
+            #[serde(default, deserialize_with = "null_default")]
+            flag: bool,
+            #[serde(default)]
+            strings: Strings,
+        }
+        let t: T = serde_json::from_str(
+            r#"{"list": null, "flag": null, "strings": ["a", 7, true, null, {"x":1}, ["b"]]}"#,
+        )
+        .unwrap();
+        assert!(t.list.is_empty());
+        assert!(!t.flag);
+        assert_eq!(t.strings.0, vec!["a", "7", "true", "b"]);
+        let t: T = serde_json::from_str(r#"{"strings": "single"}"#).unwrap();
+        assert_eq!(t.strings.0, vec!["single"]);
+        assert_eq!(cap("abc", 5), "abc");
+        assert_eq!(cap("abcdef", 3), "abc…");
+        let mut list = vec!["a".to_owned()];
+        push_unique(&mut list, " a ");
+        push_unique(&mut list, "");
+        push_unique(&mut list, "b");
+        assert_eq!(list, vec!["a", "b"]);
+        assert_eq!(value_text(&serde_json::json!("s")), "s");
+        assert_eq!(
+            value_text(&serde_json::json!({"k": [1, 2]})),
+            r#"{"k":[1,2]}"#
+        );
     }
 
     #[test]

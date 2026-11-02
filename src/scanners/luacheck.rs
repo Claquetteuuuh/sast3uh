@@ -1,4 +1,7 @@
 //! Luacheck: the Lua linter (`--formatter plain --codes --ranges` output).
+//!
+//! Every line of the report becomes a finding (code, message, line, column range); a line that
+//! does not look like one becomes a warning, so nothing is lost silently.
 
 use std::ffi::OsString;
 
@@ -53,13 +56,7 @@ impl Scanner for Luacheck {
         }
         match output.code {
             // 0: clean, 1: warnings, 2: errors (syntax) — all three carry a report.
-            Some(0..=2) => {
-                let parsed = parse(&output.stdout_text());
-                Outcome::Completed {
-                    findings: parsed.findings,
-                    warnings: parsed.warnings,
-                }
-            }
+            Some(0..=2) => Outcome::Completed(parse(&output.stdout_text())),
             Some(3) => Outcome::Failed(format!("I/O error: {}", tail(&output.stderr_text(), 400))),
             Some(4) => Outcome::Failed(format!(
                 "invalid options or configuration: {}",
@@ -100,28 +97,22 @@ fn parse_line(line: &str) -> Option<Finding> {
     let columns = parts.next()?;
     let line_no: u32 = parts.next()?.parse().ok()?;
     let path = normalize_reported_path(parts.next()?)?;
-    let column: u32 = columns.split('-').next()?.parse().ok()?;
+    let mut bounds = columns.split('-');
+    let column: u32 = bounds.next()?.parse().ok()?;
+    let end_column: Option<u32> = bounds.next().and_then(|c| c.parse().ok());
     let code = code.trim();
     let severity = match code.chars().next()? {
         'E' => Severity::Medium,
         'W' => Severity::Low,
         _ => Severity::Info,
     };
-    Some(Finding {
-        tool: "luacheck".to_owned(),
-        also_reported_by: Vec::new(),
-        rule_id: code.to_owned(),
-        severity,
-        title: code.to_owned(),
-        message: message.trim().to_owned(),
-        path,
-        line: Some(line_no),
-        end_line: Some(line_no),
-        column: Some(column),
-        cwes: Vec::new(),
-        url: Some(WARNINGS_URL.to_owned()),
-        fingerprint: None,
-    })
+    let mut finding = Finding::new("luacheck", code, severity, code, message.trim(), path);
+    finding.line = Some(line_no);
+    finding.end_line = Some(line_no);
+    finding.column = Some(column);
+    finding.end_column = end_column;
+    finding.url = Some(WARNINGS_URL.to_owned());
+    Some(finding)
 }
 
 #[cfg(test)]
@@ -135,10 +126,15 @@ mod tests {
     const VERSION: &str = include_str!("../../tests/fixtures/luacheck/version.txt");
 
     #[test]
-    fn parses_the_recorded_report() {
+    fn parses_the_recorded_report_completely() {
         let parsed = parse(FIXTURE);
         assert_eq!(parsed.findings.len(), 6);
         assert!(parsed.warnings.is_empty());
+        assert_eq!(
+            FIXTURE.lines().filter(|l| !l.trim().is_empty()).count(),
+            parsed.findings.len() + parsed.warnings.len(),
+            "every line is a finding or a warning"
+        );
         let first = &parsed.findings[0];
         assert_eq!(first.tool, "luacheck");
         assert_eq!(first.rule_id, "W211");
@@ -146,9 +142,17 @@ mod tests {
         assert_eq!(first.severity, Severity::Low);
         assert_eq!(first.message, "unused variable 'unused'");
         assert_eq!(first.path, PathBuf::from("src/main.lua"));
-        assert_eq!(first.line, Some(1));
-        assert_eq!(first.column, Some(7));
+        assert_eq!(
+            (first.line, first.end_line, first.column, first.end_column),
+            (Some(1), Some(1), Some(7), Some(12))
+        );
         assert_eq!(first.url.as_deref(), Some(WARNINGS_URL));
+        let arg = parsed
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "W212")
+            .unwrap();
+        assert_eq!((arg.column, arg.end_column), (Some(22), Some(22)));
     }
 
     #[test]
@@ -168,9 +172,10 @@ mod tests {
     #[test]
     fn unparsable_lines_become_warnings_and_bad_paths_are_dropped() {
         let parsed = parse(
-            "Checking src/x.lua  OK\n\n../x.lua:1:1: (W111) bad\nsrc/y.lua:abc:1: (W111) bad\n",
+            "Checking src/x.lua  OK\n\n../x.lua:1:1: (W111) bad\nsrc/y.lua:abc:1: (W111) bad\nsrc/z.lua:3:4: (W111) no range\n",
         );
-        assert!(parsed.findings.is_empty());
+        assert_eq!(parsed.findings.len(), 1);
+        assert_eq!(parsed.findings[0].end_column, None);
         assert_eq!(parsed.warnings.len(), 3, "{:?}", parsed.warnings);
     }
 
@@ -185,7 +190,7 @@ mod tests {
     fn interpret_follows_luachecks_exit_codes() {
         for code in [0, 1, 2] {
             match Luacheck.interpret(&output(Some(code), FIXTURE.as_bytes(), "")) {
-                Outcome::Completed { findings, .. } => assert_eq!(findings.len(), 6, "exit {code}"),
+                Outcome::Completed(parsed) => assert_eq!(parsed.findings.len(), 6, "exit {code}"),
                 other => panic!("exit {code}: {other:?}"),
             }
         }

@@ -249,22 +249,33 @@ fn run_one(
     };
     let duration_ms = u64::try_from(output.duration.as_millis()).unwrap_or(u64::MAX);
     match scanner.interpret(&output) {
-        Outcome::Completed { findings, warnings } => {
-            for warning in warnings {
+        Outcome::Completed(parsed) => {
+            for warning in &parsed.warnings {
                 deps.log(format!("{name}: {warning}"));
+            }
+            if !parsed.diagnostics.is_empty() {
+                deps.log(format!(
+                    "{name}: {} diagnostic(s) reported by the tool",
+                    parsed.diagnostics.len()
+                ));
+            }
+            if !parsed.skipped_paths.is_empty() {
+                deps.log(format!(
+                    "{name}: {} path(s) skipped by the tool",
+                    parsed.skipped_paths.len()
+                ));
             }
             deps.log(format!(
                 "{name}: {} finding(s) in {duration_ms} ms",
-                findings.len()
+                parsed.findings.len()
             ));
-            let run = ToolRun {
-                tool: name.to_owned(),
-                version,
-                status: ToolStatus::Completed,
-                findings: findings.len(),
-                duration_ms,
-            };
-            (run, findings)
+            let mut run = ToolRun::new(name, version, ToolStatus::Completed);
+            run.findings = parsed.findings.len();
+            run.duration_ms = duration_ms;
+            run.scanned_files = parsed.scanned_files;
+            run.skipped_paths = parsed.skipped_paths;
+            run.diagnostics = parsed.diagnostics;
+            (run, parsed.findings)
         }
         Outcome::Skipped(reason) => {
             deps.log(format!("{name}: skipped: {reason}"));
@@ -317,24 +328,19 @@ fn refresh(
 }
 
 fn skipped(name: &str, version: Option<String>, reason: &str) -> ToolRun {
-    ToolRun {
-        tool: name.to_owned(),
+    ToolRun::new(
+        name,
         version,
-        status: ToolStatus::Skipped {
+        ToolStatus::Skipped {
             reason: reason.to_owned(),
         },
-        findings: 0,
-        duration_ms: 0,
-    }
+    )
 }
 
 fn failed(name: &str, version: Option<String>, reason: String, duration_ms: u64) -> ToolRun {
     ToolRun {
-        tool: name.to_owned(),
-        version,
-        status: ToolStatus::Failed { reason },
-        findings: 0,
         duration_ms,
+        ..ToolRun::new(name, version, ToolStatus::Failed { reason })
     }
 }
 
@@ -743,16 +749,30 @@ mod tests {
             "bearer and semgrep agree on four lines"
         );
         assert_eq!(report.summary.total, 18);
+        assert_eq!(
+            report.tools[0].scanned_files,
+            Some(3),
+            "semgrep's paths.scanned"
+        );
+        assert_eq!(
+            report.tools[0].diagnostics.len(),
+            3,
+            "semgrep's rule errors travel into the report"
+        );
+        assert_eq!(report.tools[1].scanned_files, None);
         assert_eq!(report.target, target.path().canonicalize().unwrap());
 
         // Every scan ran in the target with the scanner's own environment, after a version call.
         let calls = runner.calls();
         assert_eq!(calls.len(), 6);
         let scans: Vec<_> = calls.iter().filter(|c| !is_version_call(c)).collect();
+        // The target is canonicalised first: on a runner where /tmp is a symlink the two differ.
+        let canonical = target.path().canonicalize().unwrap();
         assert!(
             scans
                 .iter()
-                .all(|c| c.cwd.as_deref() == Some(target.path()))
+                .all(|c| c.cwd.as_deref() == Some(canonical.as_path())),
+            "{scans:?}"
         );
         assert!(
             scans

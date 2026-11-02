@@ -304,7 +304,7 @@ mod tests {
         assert!(out.is_empty(), "nothing on stdout when --output is given");
         assert!(log.contains("report written to"), "{log}");
         let yaml = std::fs::read_to_string(&report_path).expect("report file");
-        assert!(yaml.contains("schema_version: 1"), "{yaml}");
+        assert!(yaml.contains("schema_version: 2"), "{yaml}");
 
         let cli = parse(&[
             "sasteuuuh",
