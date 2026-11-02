@@ -1,0 +1,3 @@
+
+A new version of Semgrep is available. See https://semgrep.dev/docs/upgrading
+1.163.0

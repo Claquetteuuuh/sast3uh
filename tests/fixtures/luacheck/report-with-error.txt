@@ -1,0 +1,7 @@
+src/broken.lua:2:10-15: (E011) expected '(' near 'broken'
+src/main.lua:1:7-12: (W211) unused variable 'unused'
+src/main.lua:2:10-17: (W111) setting non-standard global variable 'globalfn'
+src/main.lua:2:22-22: (W212) unused argument 'b'
+src/main.lua:3:9-9: (W211) unused variable 'x'
+src/main.lua:4:14-29: (W113) accessing undefined variable 'undefined_global'
+src/main.lua:6:9-12: (W542) empty if branch
