@@ -1,0 +1,140 @@
+# ──────────────────────────────────────────────────────────────────────
+# CI — Format · Clippy · Docs · Tests · Coverage · Release build
+# Runs on every push and PR. Sole owner of the cargo checks: nothing in
+# this file is re-run by another workflow (pre-commit.yml SKIPs them).
+# ──────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Every warning is an error, in rustc, clippy and rustdoc alike.
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────
+  lint:
+    name: "🔍 Format · Clippy · Docs"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The toolchain is pinned by rust-toolchain.toml; rustup is on the runner.
+      - name: Install the pinned toolchain
+        run: rustup toolchain install && rustup show
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Docs
+        run: cargo doc --no-deps --all-features --locked
+
+  # ────────────────────────────────────────────────────────────────────
+  test:
+    name: "🧪 Tests (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    needs: [lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install && rustup show
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Test
+        run: cargo test --all-features --locked
+
+  # ────────────────────────────────────────────────────────────────────
+  coverage:
+    name: "📊 Coverage"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install && rustup show && rustup component add llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # Pinned version, built from crates.io, cached in ~/.cargo/bin by rust-cache.
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov@0.9.1 --locked
+
+      # The floor is a regression gate: a change that stops testing what it
+      # touches fails here, not in production.
+      - name: Coverage (fails under 80% of lines)
+        run: |
+          cargo llvm-cov --all-features --locked --fail-under-lines 80 --lcov --output-path lcov.info
+          cargo llvm-cov report --summary-only
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ────────────────────────────────────────────────────────────────────
+  build:
+    name: "🏗️ Release build"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [test]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install && rustup show
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Build (release profile — fat LTO, overflow checks on)
+        run: cargo build --release --locked
+
+      - name: Smoke test the binary
+        run: ./target/release/sasteuuuh --version && ./target/release/sasteuuuh tools
+
+      - name: Upload binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sasteuuuh-linux-x86_64
+          path: target/release/sasteuuuh
+          retention-days: 7

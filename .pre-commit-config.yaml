@@ -1,0 +1,166 @@
+# ──────────────────────────────────────────────────────────────────────
+# The commit gate. Once per clone:
+#
+#   pre-commit install            # installs pre-commit, commit-msg and pre-push
+#
+# After that a commit cannot skip it. CI re-runs the hygiene hooks
+# (pre-commit.yml) and owns the heavy ones — cargo in ci.yml, cargo-deny,
+# Bearer, Grype, Semgrep, Plumber in their own workflows — so they are
+# SKIPped there, never duplicated.
+# ──────────────────────────────────────────────────────────────────────
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+minimum_pre_commit_version: "4.0.0"
+
+repos:
+  # ── Basic hygiene ───────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: check-symlinks
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # ── Secrets detection ──────────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  # ── Spelling (code, docs, comments) ────────────────────────────────
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.51.1
+    hooks:
+      - id: typos
+        # Report, never rewrite: the hook's default --write-changes would edit
+        # code silently. Fix the word by hand (or add it to typos.toml).
+        args: [--force-exclude]
+
+  # ── YAML / Markdown / GitHub Actions linting ───────────────────────
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        args: ['--strict']
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.50.0
+    hooks:
+      - id: markdownlint
+        args: ['--fix']
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  # zizmor: GitHub Actions security linter (template injection, unpinned
+  # actions, credential persistence, excessive permissions…).
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.31.1
+    hooks:
+      - id: zizmor
+
+  # ── Commit message: conventional commits ───────────────────────────
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, chore, docs, refactor, test, ci, build, perf, revert]
+
+  # ── Dependency gate: advisories, licenses, bans, sources ───────────
+  # Built by pre-commit itself (language: rust), so the version is pinned
+  # by `rev` and nothing on the machine is trusted.
+  - repo: https://github.com/EmbarkStudios/cargo-deny
+    rev: 0.20.2
+    hooks:
+      - id: cargo-deny
+        args: ['--all-features', 'check']
+        files: ^(Cargo\.toml|Cargo\.lock|deny\.toml)$
+
+  # ── Local gates ────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        language: system
+        entry: cargo fmt --all -- --check
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        language: system
+        entry: cargo clippy --all-targets --all-features --locked -- -D warnings
+        always_run: true
+        pass_filenames: false
+
+      - id: cargo-doc
+        name: cargo doc
+        language: system
+        entry: env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features --locked
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test
+        language: system
+        entry: cargo test --all-features --locked
+        always_run: true
+        pass_filenames: false
+
+      # Bearer SAST: exits 1 on any finding at or above the severity.
+      - id: bearer
+        name: bearer scan
+        language: system
+        entry: bearer scan . --severity critical,high --quiet
+        always_run: true
+        pass_filenames: false
+
+      # Grype SCA on Cargo.lock: known CVEs in the dependency tree.
+      - id: grype
+        name: grype scan
+        language: system
+        entry: grype dir:. --fail-on high -q
+        always_run: true
+        pass_filenames: false
+
+      # Plumber: CI/CD pipeline security (actions pinned, permissions,
+      # triggers, Dependabot cooldown, SECURITY.md…). Reads the repository
+      # settings with the gh CLI token; any finding fails.
+      - id: plumber
+        name: plumber analyze
+        language: system
+        entry: sh -c 'GH_TOKEN="$(gh auth token)" plumber analyze --min-points 100 --print=false'
+        files: ^(\.github/|\.plumber\.yaml|SECURITY\.md)
+        pass_filenames: false
+
+      # ── pre-push: the slow ones ──────────────────────────────────────
+      - id: semgrep
+        name: semgrep scan
+        language: system
+        entry: semgrep scan --config p/rust --config p/secrets --error --quiet --metrics=off .
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: cargo-build-release
+        name: cargo build --release
+        language: system
+        entry: cargo build --release --locked
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]

@@ -1,0 +1,145 @@
+# Plumber configuration (https://github.com/getplumber/plumber)
+#
+# Every control is listed on purpose: a control missing from this file is
+# "disabled in configuration", not defaulted. `plumber config view` shows
+# the effective result; `plumber catalog` documents each control.
+version: "2.0"
+github:
+  controls:
+    # ── Third-party actions ─────────────────────────────────────────
+    # Every action is pinned by full commit SHA, official ones included.
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+      trustedOwners: []
+
+    # Explicit allow-list of the third-party actions this repo runs. Each
+    # one is SHA-pinned at its call site and Dependabot keeps the pins
+    # fresh. Owner-level wildcards for vendor orgs; exact repos for
+    # individual-maintainer accounts. A new action is added here with a
+    # comment saying what it is for.
+    githubActionMustComeFromAuthorizedSources:
+      enabled: true
+      trustGithubOfficialActions: true
+      trustSameOrgActions: true
+      trustedGithubActions:
+        - anchore/*                     # Grype (scan-action)
+        - EmbarkStudios/cargo-deny-action
+        - getplumber/*                  # Plumber itself
+        - ossf/*                        # OpenSSF Scorecard
+        - zizmorcore/*                  # zizmor
+        - Swatinem/rust-cache           # cargo cache (individual maintainer)
+
+    actionsMustNotBeArchived:
+      enabled: true
+    actionRefsMustExistUpstream:
+      enabled: true
+    actionsMustNotCarryKnownCVEs:
+      enabled: true
+    actionsMustNotExecuteMutableRemoteCode:
+      enabled: true
+    externalRefsMustNotCollide:
+      enabled: true
+
+    # ── Container images ────────────────────────────────────────────
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      tags:
+        - latest
+        - dev
+        - development
+        - staging
+        - main
+        - master
+      containerImagesMustBePinnedByDigest: true
+    pipelineMustNotUseDockerInDocker:
+      enabled: true
+      detectInsecureDaemon: true
+
+    # ── Scripts, secrets, variables ─────────────────────────────────
+    pipelineMustNotExecuteUnverifiedScripts:
+      enabled: true
+      trustedUrls: []
+    reusableWorkflowsMustNotInheritSecrets:
+      enabled: true
+    checkoutMustNotPersistCredentials:
+      enabled: true
+    workflowMustNotExportEntireSecretsContext:
+      enabled: true
+    workflowMustNotInjectUserInputInScripts:
+      enabled: true
+    workflowMustNotWriteUntrustedContentToGitHubEnv:
+      enabled: true
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+      forbiddenVariables:
+        - ACTIONS_STEP_DEBUG
+        - ACTIONS_RUNNER_DEBUG
+
+    # ── Security jobs stay security jobs ────────────────────────────
+    securityJobsMustNotBeWeakened:
+      enabled: true
+      securityJobPatterns:
+        - "*codeql*"
+        - "*dependency-review*"
+        - "*trufflehog*"
+        - "*gitleaks*"
+        - "*osv-scanner*"
+        - "*semgrep*"
+        - "*trivy*"
+        - "*snyk*"
+        - "*bearer*"
+        - "*grype*"
+        - "*deny*"
+        - "*zizmor*"
+        - "*plumber*"
+        - "*scorecard*"
+        - "*-sast"
+        - "*-sast-*"
+        - "*-scan"
+        - "*scan*"
+        - "*-security"
+        - "*-security-*"
+        - "*-audit"
+        - "*-audit-*"
+        - "*secret*detect*"
+        - "*detect*secret*"
+      allowFailureMustBeFalse:
+        enabled: true
+      rulesMustNotBeRedefined:
+        enabled: true
+      whenMustNotBeManual:
+        enabled: true
+
+    # ── Triggers, permissions, cache ────────────────────────────────
+    workflowMustNotUseDangerousTriggers:
+      enabled: true
+    pullRequestTargetMustNotCheckoutHead:
+      enabled: true
+    workflowsMustDeclarePermissions:
+      enabled: true
+    workflowMustNotGrantPermissionsWriteAll:
+      enabled: true
+    workflowsMustBeValid:
+      enabled: true
+    untrustedTriggersMustNotWriteCache:
+      enabled: true
+      exemptWorkflows: []
+      exemptJobs: []
+
+    # Nothing to require yet (every workflow is hand-written here).
+    workflowMustIncludeRequiredActions:
+      enabled: false
+      requiredGroups: []
+
+    # ── Repository settings ─────────────────────────────────────────
+    # Branch protection on main would block the direct pushes this
+    # solo-maintained repo lives on (for this control it is "direct
+    # pushes blocked" or nothing). Enable it the day the workflow moves
+    # to pull requests with required checks.
+    branchMustBeProtected:
+      enabled: false
+      defaultMustBeProtected: true
+      namePatterns:
+        - main
+      allowForcePush: false
+      codeOwnerApprovalRequired: false

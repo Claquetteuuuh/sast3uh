@@ -1,0 +1,7 @@
+[files]
+# Recorded scanner output carries fingerprints and hashes: random letters, not words.
+extend-exclude = ["target/", "Cargo.lock", "*.sarif", "tests/fixtures/"]
+
+[default.extend-words]
+# Project name, not a typo.
+sasteuuuh = "sasteuuuh"

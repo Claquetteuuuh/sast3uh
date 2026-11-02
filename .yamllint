@@ -1,0 +1,19 @@
+# yamllint — strict, with the two things GitHub Actions needs:
+# `on:` as a key and long `uses:` lines with their SHA pin comments.
+extends: default
+
+rules:
+  line-length:
+    max: 140
+    allow-non-breakable-inline-mappings: true
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+
+ignore: |
+  target/
+  .claude/

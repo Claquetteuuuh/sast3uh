@@ -1,0 +1,6 @@
+# Pinned toolchain: the same compiler on every machine and in CI
+# (dtolnay-free: `rustup toolchain install` reads this file).
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

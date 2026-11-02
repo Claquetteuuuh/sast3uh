@@ -1,0 +1,10 @@
+# Grype SCA configuration — used by `grype dir:.` locally (pre-commit) and
+# in .github/workflows/security-scan.yml. Syft catalogs Cargo.lock.
+exclude:
+  - ./target/**
+  # Agent worktrees are nested checkouts with their own (stale) lockfiles.
+  - ./.claude/**
+
+# An ignore entry needs the advisory id, the package, a reason and a
+# removal condition — see the superapp convention.
+ignore: []

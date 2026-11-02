@@ -1,0 +1,21 @@
+# Thresholds and the APIs this codebase must not call directly.
+cognitive-complexity-threshold = 20
+too-many-lines-threshold = 120
+
+# Tests may unwrap/expect/panic/index: a failing test is the point.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+disallowed-methods = [
+  # Every scanner is spawned through `crate::exec` (the only module that may
+  # `#[allow(clippy::disallowed_methods)]`): argv as a list, never a shell
+  # string; an explicit, minimal environment; a working directory; a timeout
+  # and an output size cap. Calling Command directly skips all of that.
+  { path = "std::process::Command::new", reason = "spawn through crate::exec (argv list, scrubbed env, cwd, timeout, output cap)" },
+  # Process-global mutable state, racy with threads: pass the environment
+  # to the child explicitly instead.
+  { path = "std::env::set_var", reason = "pass an explicit environment to the child process instead of mutating ours" },
+  { path = "std::env::remove_var", reason = "pass an explicit environment to the child process instead of mutating ours" },
+]

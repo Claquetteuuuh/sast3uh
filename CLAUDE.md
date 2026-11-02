@@ -1,0 +1,252 @@
+# CLAUDE.md — sasteuuuh
+
+## Project overview
+
+sasteuuuh is a Rust CLI: a hardened wrapper that runs several static analysers
+(Semgrep, Bearer, Luacheck today) over a directory, parses what each one says,
+removes the duplicates and writes one report — text, JSON, YAML, XML or HTML —
+with one exit code. Before scanning it checks each scanner against its latest
+GitHub release and offers (asks) to update it. It runs other people's binaries
+on other people's code, so **a bug here is a security bug by default**.
+Security and the absence of regressions come first; features come second.
+
+The engineering baseline (commit gate, CI fleet, pinning, testing) is lifted
+from `../superapp` and from the ciso-assistant repository; every rule below
+exists because something slipped through somewhere once.
+
+## Stack
+
+- **Language**: Rust, edition 2024, toolchain pinned in `rust-toolchain.toml`
+- **CLI**: clap (derive) · **errors**: anyhow at the edge, thiserror inside
+- **Serialisation**: serde / serde_json / serde-saphyr (YAML, safe Rust);
+  XML and HTML are hand-written writers with escaping
+- **HTTP**: ureq over rustls (GitHub releases API, release assets) ·
+  **digests**: sha2
+- **Tests**: `cargo test` — unit tests in each module, pipeline tests on a
+  fake runner, end-to-end tests in `tests/` with assert_cmd + shell stubs
+  that replay recorded fixtures (`tests/fixtures/<tool>/`)
+- **Gates**: pre-commit, Bearer, Grype, cargo-deny, Semgrep, Plumber, zizmor,
+  CodeQL, Dependency Review, OpenSSF Scorecard
+
+## Architecture
+
+```text
+sasteuuuh/
+├── src/
+│   ├── main.rs          # thin: argv → sasteuuuh::run → exit code
+│   ├── lib.rs           # run / run_with (injectable Deps), exit codes, --fail-on gate
+│   ├── cli.rs           # clap definition only — no behaviour
+│   ├── pipeline.rs      # locate → version → update (ask) → run → parse → dedup → Report
+│   ├── scanners/        # Scanner trait + registry; semgrep.rs, bearer.rs, luacheck.rs
+│   │                    # (args, env, output → findings, update plan) — pure glue
+│   ├── exec.rs          # THE process boundary: argv list, scrubbed env, cwd, timeout, cap
+│   ├── update.rs        # latest release (GitHub API), UpdatePlan/UpdateStep, checksum-
+│   │                    # verified release download, atomic install or cache fallback
+│   ├── dedup.rs         # exact + cross-tool (path, line, CWE) merge, sort worst first
+│   ├── model.rs         # Severity, Finding, ToolRun, Summary, Report, path normalisation
+│   ├── output/          # text, json, yaml, xml, html renderers + atomic file write
+│   ├── version.rs       # loose semver parse/compare
+│   ├── prompt.rs        # yes/no on a terminal; always "no" when not interactive
+│   ├── tools.rs         # find_in_path — the only way a binary is resolved
+│   └── timefmt.rs       # RFC 3339 without a date crate
+├── tests/cli.rs         # process boundary: exit codes, stdout vs stderr, files
+├── tests/fixtures/      # recorded scanner output (report + version banner per tool)
+├── Cargo.toml           # hardened lints + release profile (fat LTO, overflow checks)
+├── clippy.toml          # thresholds + disallowed methods (Command::new, set_var…)
+├── deny.toml            # advisories, license allow-list, bans, crates.io only
+├── .pre-commit-config.yaml
+├── .plumber.yaml        # CI/CD trust policy (every control listed explicitly)
+├── bearer.yml, .grype.yaml
+└── .github/workflows/   # CI, cargo-deny, Bearer, Grype, Semgrep, CodeQL,
+                         # CI hardening (zizmor + Plumber), Scorecard,
+                         # Dependency Review, pre-commit
+```
+
+Exit codes are fixed: `0` clean, `1` findings at or above `--fail-on`, `2`
+usage (clap), `3` could not run or a scanner failed (report still written).
+They are documented in `src/lib.rs` and asserted in `tests/cli.rs`.
+
+### Adding a scanner
+
+1. `src/scanners/<tool>.rs`: a unit struct implementing `Scanner` — name,
+   binary, GitHub repo, version args, scan args (the target is the cwd, pass
+   `.`), `interpret` (exit code + stdout → `Outcome`), `update_plan`.
+2. A pure `parse(bytes)` function tested on **recorded output** copied into
+   `tests/fixtures/<tool>/report.*` and `version.txt` (run the real tool on
+   a sample project once; never call it from a test).
+3. Register it in `scanners::registry()`; `names()`/`by_name` follow.
+4. Add the stub to `tests/cli.rs` (`Stubs::new`) and extend the end-to-end
+   assertions; `sasteuuuh tools` picks it up by itself.
+
+## Dev commands
+
+```bash
+pre-commit install                                   # once per clone
+cargo test --all-features --locked                   # all tests
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo fmt --all
+cargo deny check                                     # advisories, licenses, bans, sources
+cargo build --release --locked
+```
+
+## MANDATORY — Pre-commit checklist (BLOCKING)
+
+**This section is the single most important rule in this file.**
+Run ALL of it before EVERY `git commit`. No exceptions.
+
+```bash
+# 0. Stage EVERYTHING first — `pre-commit run --all-files` only looks at
+#    files git knows about; an untracked new file is silently skipped and
+#    fails in CI instead.
+git add -A
+
+# 1. Pre-commit (hygiene, secrets, typos, yaml/md/actions lint, zizmor,
+#    cargo fmt / clippy / doc / test, cargo-deny, Bearer, Grype, Plumber)
+pre-commit run --all-files
+# If a hook "modified files", stage its fixes and run it again until it passes.
+
+# 2. The pre-push hooks, by hand (Semgrep with real Rust rules, release build)
+pre-commit run --all-files --hook-stage pre-push
+```
+
+**If ANY check fails, DO NOT commit. Fix the issue first, then re-run.**
+
+- Clippy: every lint in `Cargo.toml` is an error in CI (`-D warnings`);
+  fix the code, never `#[allow]` without a comment saying why
+- cargo-deny: an advisory ⇒ bump the dependency; a license ⇒ review it and
+  add it to `deny.toml` on purpose, or drop the crate
+- Grype High/Critical ⇒ update the dependency; an ignore in `.grype.yaml`
+  needs the advisory id, a reason and a removal condition
+- Bearer Critical/High ⇒ fix the flagged pattern
+- Plumber: any finding fails (`--min-points 100`); a new third-party action
+  must be SHA-pinned AND allow-listed in `.plumber.yaml`
+- Keep the `bearer`, `grype`, `semgrep`, `plumber` binaries current — CI
+  runs the latest release, and an older local copy has fewer rules: it
+  waves through what CI then blocks
+- Medium/Low from Grype or Bearer are acceptable; everything from
+  cargo-deny, clippy, zizmor and Plumber is blocking
+
+The git hooks make the gate automatic; `pre-commit install` once per clone.
+A `--no-verify` commit is never acceptable.
+
+## Testing (MANDATORY)
+
+A regression is the one failure that must never reach users, so every change
+ships with its tests in the same commit — a feature without tests is not
+finished. CI enforces **80 % line coverage** (`cargo llvm-cov
+--fail-under-lines 80`).
+
+- **Unit tests** for every new function, type and parser, in a `#[cfg(test)]
+  mod tests` next to the code.
+- **End-to-end tests** in `tests/cli.rs` for every subcommand and every exit
+  code: happy path, usage error, missing target, scanner failure.
+- **A regression test for every bug fix**, written to fail before the fix.
+- **Scanner adapters are tested against recorded output** (fixtures in
+  `tests/fixtures/<tool>/`), never against the live binary: tests must not
+  depend on what is installed on the machine, and must not touch the network.
+  The pipeline is tested with `FakeRunner`/`FakeHttp`/`FixedAnswer`; the
+  binary with shell stubs on a private `PATH` that replay the fixtures.
+- **Malformed input is a test case**: every parser of scanner output gets a
+  truncated, an empty, an oversized and a wrong-shape fixture.
+- File fixtures go through `tempfile`; never write into the repo or `/tmp`
+  by hand.
+- Tests may `unwrap`/`expect`/`panic`/index (`clippy.toml` allows it in
+  `#[test]` bodies; an integration test crate adds the `#![allow]` at its
+  top with the comment that is in `tests/cli.rs`).
+
+## Secure coding rules (the point of the project)
+
+- **No `unsafe`** — forbidden at the crate level. If a dependency needs it,
+  that is a reason to look for another dependency.
+- **No panic paths in library code**: `unwrap`, `expect`, `panic!`,
+  `todo!`, `unimplemented!`, `unreachable!`, `[i]` indexing and string
+  slicing are clippy *errors*. Return a `Result`; `main` prints and exits.
+- **Spawning a scanner** goes through `crate::exec::run` (the only call site
+  of `std::process::Command::new`, with `#[allow(clippy::disallowed_methods)]`
+  and a comment); the pipeline receives it as a `Runner` so tests inject a
+  fake:
+  - argv as a list — never a shell, never a formatted command string;
+  - an explicit, minimal environment (`env_clear()` then only what the tool
+    needs: `PATH`, `HOME`, locale) — the user's tokens never reach a scanner
+    that does not need them;
+  - the target as the working directory, the binary resolved with
+    `tools::find_in_path` (a name with a path separator is never run);
+  - a timeout, and a cap on captured stdout/stderr (a scanner that prints
+    forever must not OOM the wrapper);
+  - the exit status interpreted per tool (most return 1 on findings — that
+    is a result, not an error).
+- **Scanner output is untrusted input**: parse with serde into typed structs,
+  bounded sizes, lossy UTF-8; a malformed report is an error for that tool,
+  never a panic, never silently empty.
+- **Paths**: the target is canonicalised once (`scan::resolve_target`);
+  findings are reported relative to it; a finding pointing outside the
+  target is dropped with a warning (symlink escape).
+- **Never mutate the process environment** (`set_var`/`remove_var` are
+  disallowed) — pass an environment to the child.
+- **Never log or print a secret**: no environment dump, no raw scanner
+  stderr in the JSON report, redact anything that looks like a token.
+- **Written files** (reports, downloaded binaries) are staged next to their
+  destination and renamed over it (`output::write_atomically`,
+  `update::place_binary`): a symlink at the destination is replaced, never
+  followed. Never write to a path the scanned project controls.
+- **Updates ask first**: the prompt only appears on a terminal, a
+  non-interactive run never changes the machine, `--update always` is the
+  explicit opt-in. A release asset is verified against the release's
+  `checksums.txt` before it is touched; an unwritable destination leaves the
+  verified file in `~/.cache/sasteuuuh/` and prints the `sudo install` line.
+- **Reports are output encoding**: XML and HTML escape every value, HTML
+  ships a CSP with no script, and only `http(s)` URLs become links.
+- **Dependencies**: crates.io only, no git deps, license allow-list, no
+  native TLS (`deny.toml`); prefer the standard library over a small crate.
+- **Integer overflow** is checked in release too (`overflow-checks = true`).
+
+## Commits & versioning
+
+Conventional commits, enforced by the `commit-msg` hook: `feat:`, `fix:`,
+`chore:`, `docs:`, `refactor:`, `test:`, `ci:`, `build:`, `perf:`,
+`revert:`, with an optional scope (`fix(ci):`, `feat(semgrep):`).
+
+Versions are `vX.Y.Z`, and the commit types in a release decide which number
+moves:
+
+- **X — major**: only the user decides to bump it. Never propose or tag a
+  major version on your own, whatever the size of the change.
+- **Y — feature**: the release contains at least one `feat:`. Resets Z to 0.
+- **Z — bug fix**: the release contains only `fix:` (and chores/docs).
+
+### Release flow — strict order, verify between every step
+
+```bash
+git commit …          # the gate runs; if it fails, THE COMMIT DOES NOT EXIST
+git log -1            # VERIFY the commit is there before tagging
+git tag vX.Y.Z
+git log -1 vX.Y.Z     # VERIFY the tag points at the right commit
+git push origin main vX.Y.Z
+```
+
+Never script `commit && tag && push` without each step aborting on the
+previous one's failure. A release workflow (signed artifacts + build
+provenance attestations, as Plumber CTRL-712 requires) is written the day
+there is a first release; until then there is nothing to publish.
+
+## CI fleet (what each workflow owns — nothing is run twice)
+
+| Workflow                | Owns                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `ci.yml`                | fmt, clippy, rustdoc, tests (Linux + macOS), coverage ≥ 80 %, release build          |
+| `cargo-deny.yml`        | RustSec advisories, licenses, bans, sources (+ weekly)                               |
+| `security-scan.yml`     | Grype SCA on `Cargo.lock` (+ weekly)                                                 |
+| `bearer.yml`            | Bearer SAST — no Rust rules, covers helper scripts the day there are some (+ weekly) |
+| `semgrep.yml`           | Semgrep `p/rust` + `p/secrets` (+ weekly)                                            |
+| `codeql.yml`            | CodeQL Rust, security-and-quality (+ weekly)                                         |
+| `ci-hardening.yml`      | zizmor + Plumber on the workflows and repo settings                                  |
+| `scorecard.yml`         | OpenSSF Scorecard                                                                    |
+| `dependency-review.yml` | PR gate on new vulnerable / copyleft dependencies                                    |
+| `pre-commit.yml`        | the hygiene hooks only (the rest is SKIPped — see above)                             |
+
+Every action is pinned by full commit SHA with a `# vX.Y.Z` comment that
+matches the SHA (Plumber checks both); Dependabot bumps them weekly after a
+7-day cooldown. Every `actions/checkout` sets `persist-credentials: false`.
+Permissions are declared per job, `contents: read` by default. A new
+third-party action is added to `trustedGithubActions` in `.plumber.yaml`
+with a comment saying what it is for.

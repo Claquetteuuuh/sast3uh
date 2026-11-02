@@ -1,0 +1,8 @@
+# Bearer SAST configuration — used by `bearer scan .` locally (pre-commit)
+# and in .github/workflows/bearer.yml.
+scan:
+  skip-path:
+    # Build output.
+    - target
+    # Agent worktrees are nested checkouts, not part of the shipped tree.
+    - .claude

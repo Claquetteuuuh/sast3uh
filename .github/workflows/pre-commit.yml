@@ -1,0 +1,60 @@
+# ──────────────────────────────────────────────────────────────────────
+# Pre-commit — the hygiene hooks from .pre-commit-config.yaml
+# Formatting, secrets, spelling, YAML/Markdown/Actions linting, zizmor:
+# what a developer skipping the local hook would let through.
+#
+# The heavy hooks are SKIPped on purpose: each has a workflow of its own
+# (ci.yml, cargo-deny.yml, bearer.yml, security-scan.yml, semgrep.yml,
+# ci-hardening.yml) and running them twice is the single biggest waste
+# of minutes in a repo.
+#
+# pre-commit is installed by hand (pinned) rather than through
+# pre-commit/action: that action pulls actions/cache@v4 by mutable tag,
+# which Plumber rightly flags as an unpinned link in the chain.
+# ──────────────────────────────────────────────────────────────────────
+name: "✅ Pre-commit"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Owned by their own workflows (see the header).
+  SKIP: cargo-fmt,cargo-clippy,cargo-doc,cargo-test,cargo-deny,bearer,grype,plumber,semgrep,cargo-build-release
+
+jobs:
+  pre-commit:
+    name: Pre-commit hooks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install pre-commit (pinned)
+        run: pipx install pre-commit==4.7.0
+
+      # Hook environments (go, rust, node tools) keyed on the config: a
+      # changed rev rebuilds them, an unchanged one costs nothing.
+      - name: Cache hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files --show-diff-on-failure --color=always

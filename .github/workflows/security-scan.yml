@@ -1,0 +1,65 @@
+# ──────────────────────────────────────────────────────────────────────
+# Grype SCA — Software Composition Analysis
+# Scans Cargo.lock for known CVEs. Fails on High/Critical.
+# Also runs on Dependabot PRs — this is the workflow with something to
+# say about a dependency bump.
+# ──────────────────────────────────────────────────────────────────────
+name: "🔒 Grype SCA"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 6 AM UTC — catch new CVEs in existing deps.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sca:
+    name: Grype dependency scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # SARIF upload to the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Grype SCA scan
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        id: grype
+        with:
+          path: "."
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+          cache-db: true
+
+      # SARIF is unreadable in the job log — print what tripped the gate so the
+      # failure is actionable without downloading artifacts.
+      - name: Show findings
+        if: failure() && steps.grype.outputs.sarif != ''
+        env:
+          SARIF: ${{ steps.grype.outputs.sarif }}
+        run: |
+          jq -r '.runs[0].results[] | "\(.level)\t\(.ruleId)\t\(.message.text)"' "$SARIF" || cat "$SARIF"
+
+      # The scan step above is the gate; the upload is best-effort and must
+      # never turn a clean scan into a red check.
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype-sca

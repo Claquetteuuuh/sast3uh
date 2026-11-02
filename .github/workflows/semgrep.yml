@@ -1,0 +1,57 @@
+# ──────────────────────────────────────────────────────────────────────
+# Semgrep SAST — the scanner with real Rust rules (p/rust) plus the
+# secrets pack. Fails on any finding.
+# ──────────────────────────────────────────────────────────────────────
+name: "🔎 Semgrep SAST"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 7 AM UTC — catch new rules.
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sast:
+    name: Semgrep scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # SARIF upload to the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install Semgrep (pinned)
+        run: pipx install semgrep==1.163.0
+
+      - name: Run Semgrep
+        run: >-
+          semgrep scan --config p/rust --config p/secrets
+          --error --metrics=off
+          --sarif --sarif-output=semgrep.sarif
+          --text
+          .
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-sast

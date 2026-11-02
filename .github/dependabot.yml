@@ -1,0 +1,55 @@
+# ──────────────────────────────────────────────────────────────────────
+# Dependabot — one grouped pull request per ecosystem.
+#
+# `cooldown` holds a newly published version back for a few days: the
+# window in which a hijacked release usually gets caught and yanked
+# (Plumber CTRL-902). Security updates bypass it.
+# `applies-to: security-updates` must be spelled out: security bumps
+# ignore version-update groups otherwise, one PR each.
+# ──────────────────────────────────────────────────────────────────────
+version: 2
+updates:
+  # ── Cargo ───────────────────────────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      all-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # ── GitHub Actions ──────────────────────────────────────────────────
+  # Keeps the SHA pins (and their version comments) current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - ci
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"

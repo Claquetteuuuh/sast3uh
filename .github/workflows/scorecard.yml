@@ -1,0 +1,51 @@
+# ──────────────────────────────────────────────────────────────────────
+# OSSF Scorecard — Supply chain security assessment
+# Evaluates the repo's security posture: branch protection, dependency
+# pinning, CI hardening, etc. Results in Security → Code scanning.
+# ──────────────────────────────────────────────────────────────────────
+name: "🏆 OSSF Scorecard"
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly Tuesday 5 AM UTC.
+    - cron: "0 5 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      # Job-level permissions REPLACE the top-level set: `contents: read`
+      # must be repeated or the token cannot even fetch the repo.
+      contents: read
+      security-events: write # SARIF upload
+      id-token: write # OIDC token for the Scorecard API
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run OSSF Scorecard
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scorecard-results.sarif
+          category: ossf-scorecard
