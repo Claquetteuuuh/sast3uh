@@ -64,8 +64,11 @@ jobs:
       - name: Run Bearer SAST scan
         run: |
           set -uo pipefail
-          bearer scan . --severity critical,high --format sarif --output bearer-results.sarif 2> bearer.stderr
-          code=$?
+          # The runner's shell is `bash -e`: capture the exit code on the command itself,
+          # or a non-zero Bearer ends the step before anything below runs.
+          code=0
+          bearer scan . --severity critical,high --format sarif --output bearer-results.sarif 2> bearer.stderr || code=$?
+          echo "bearer exit code: $code"
           cat bearer.stderr
           no_rules='zero rules found|0 rules found|requires rules'
           if [ "$code" -ne 0 ] && grep -qiE "$no_rules" bearer.stderr bearer-results.sarif 2>/dev/null; then
