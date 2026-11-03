@@ -52,6 +52,11 @@ impl Stubs {
                     fx.join("luacheck/report.txt").display()
                 ),
                 "luacheck-broken" => "#!/bin/sh\ncase \"$1\" in --version) echo 'Luacheck: 1.2.0';; *) echo 'Critical error: boom'; exit 4;; esac\n".to_owned(),
+                "trivy" => format!(
+                    "#!/bin/sh\ncase \"$1\" in --version) cat '{}';; *) cat '{}';; esac\n",
+                    fx.join("trivy/version.txt").display(),
+                    fx.join("trivy/report.json").display()
+                ),
                 // A luacheck that is not on PATH (its file name differs) and that `mise which`
                 // only reveals once `mise use` ran: the install path end to end.
                 // mise: `which` knows luacheck-via-mise after a `use`, `latest` answers for the
@@ -214,6 +219,7 @@ fn tools_lists_every_known_scanner_even_with_an_empty_path() {
             predicate::str::contains("semgrep")
                 .and(predicate::str::contains("bearer"))
                 .and(predicate::str::contains("luacheck"))
+                .and(predicate::str::contains("trivy"))
                 .and(predicate::str::contains("missing")),
         );
 }
@@ -221,7 +227,7 @@ fn tools_lists_every_known_scanner_even_with_an_empty_path() {
 #[cfg(unix)]
 #[test]
 fn scan_runs_the_stubs_merges_and_exits_1_on_findings() {
-    let stubs = Stubs::new(&["semgrep", "bearer", "luacheck"]);
+    let stubs = Stubs::new(&["semgrep", "bearer", "luacheck", "trivy"]);
     let dir = tempfile::tempdir().expect("tempdir");
     let output = bin()
         .args(["scan", "--offline", "--format", "json"])
@@ -238,7 +244,7 @@ fn scan_runs_the_stubs_merges_and_exits_1_on_findings() {
         .clone();
     let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
     assert_eq!(json["schema_version"], 2);
-    assert_eq!(json["tools"].as_array().unwrap().len(), 3);
+    assert_eq!(json["tools"].as_array().unwrap().len(), 4);
     assert!(
         json["tools"]
             .as_array()
@@ -250,8 +256,13 @@ fn scan_runs_the_stubs_merges_and_exits_1_on_findings() {
     // 9 + 7 + 6 findings; Bearer and Semgrep agree on four lines (stripe key, eval,
     // subprocess shell=True, pickle), each merged into one finding at the worst severity.
     assert_eq!(json["summary"]["duplicates_removed"], 4, "{json}");
-    assert_eq!(json["summary"]["total"], 18, "{json}");
-    assert_eq!(json["summary"]["critical"], 5, "{json}");
+    assert_eq!(
+        json["summary"]["total"],
+        18 + 24,
+        "trivy adds 24 findings on files nobody else scans: {json}"
+    );
+    assert_eq!(json["summary"]["critical"], 5 + 1, "{json}");
+    assert_eq!(json["summary"]["high"], 1 + 12, "{json}");
     let merged: Vec<_> = json["findings"]
         .as_array()
         .unwrap()

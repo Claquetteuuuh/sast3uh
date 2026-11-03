@@ -1,18 +1,19 @@
 # sasteuuuh
 
 One SAST to run them all. A hardened Rust CLI that drives several static
-analysers over a directory, parses what each one says, removes the
+analysers (SAST, SCA, IaC, secrets, licenses) over a directory, parses what each one says, removes the
 duplicates and writes a single report — text, JSON, YAML, XML or HTML —
 with a single exit code. Before scanning it checks each scanner against its
 latest GitHub release and offers to update it.
 
 ## Scanners
 
-| Tool     | Covers                                                    | mise id                     |
-| -------- | --------------------------------------------------------- | --------------------------- |
-| semgrep  | SAST, 30+ languages, rule packs (`p/default` by default)  | `semgrep`                   |
-| bearer   | SAST + sensitive data: JS/TS, Python, Go, Java, Ruby, PHP | `aqua:Bearer/bearer`        |
-| luacheck | Lua linter: globals, unused, syntax                       | `ubi:lunarmodules/luacheck` |
+| Tool     | Covers                                                            | mise id                     |
+| -------- | ----------------------------------------------------------------- | --------------------------- |
+| semgrep  | SAST, 30+ languages, rule packs (`p/default` by default)          | `semgrep`                   |
+| bearer   | SAST + sensitive data: JS/TS, Python, Go, Java, Ruby, PHP         | `aqua:Bearer/bearer`        |
+| trivy    | SCA (CVEs in lockfiles), IaC misconfigurations, secrets, licenses | `trivy`                     |
+| luacheck | Lua linter: globals, unused, syntax                               | `ubi:lunarmodules/luacheck` |
 
 Scanners are installed and updated through [mise](https://mise.jdx.dev):
 sasteuuuh resolves each binary with `mise which` (falling back to `PATH`),
@@ -47,8 +48,11 @@ finding.
 - `--semgrep-config <CONFIG>` (repeatable): your own list, no selection.
 - `sasteuuuh packs [DIR]`: what the selection would be, and why.
 
-Bearer runs both of its engines (`--scanner sast,secrets`); Luacheck runs
-with `std = max` and honours the project's `.luacheckrc`.
+Bearer runs both of its engines (`--scanner sast,secrets`); Trivy runs all
+four of its scanners (`vuln,misconfig,secret,license`), dev dependencies
+included, with comprehensive detection and license reading from file headers
+in the exhaustive profile, and cached databases only under `--offline`;
+Luacheck runs with `std = max` and honours the project's `.luacheckrc`.
 
 ## What a finding carries
 
@@ -106,7 +110,8 @@ only reports. Without mise on `PATH` there is no version check at all.
 ## Development
 
 ```bash
-pre-commit install              # once per clone — the commit gate
+pre-commit install              # once per clone — the commit gate (needs mise: the
+                                # Plumber hook runs the version pinned in .mise.toml)
 cargo test --all-features       # unit + end-to-end tests (stub scanners, recorded fixtures)
 cargo clippy --all-targets --all-features -- -D warnings
 ```

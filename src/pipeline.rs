@@ -187,6 +187,7 @@ pub fn scan(
     let scanners = select(&options.tools)?;
     let mut options = options.clone();
     options.scan.detected = crate::detect::detect(&target, crate::detect::DEFAULT_MAX_FILES);
+    options.scan.offline = !deps.online;
     deps.log(format!(
         "target: {} — {}",
         target.display(),
@@ -617,6 +618,7 @@ mod tests {
     const SEMGREP: &[u8] = include_bytes!("../tests/fixtures/semgrep/report.json");
     const BEARER: &[u8] = include_bytes!("../tests/fixtures/bearer/report.json");
     const LUACHECK: &[u8] = include_bytes!("../tests/fixtures/luacheck/report.txt");
+    const TRIVY: &[u8] = include_bytes!("../tests/fixtures/trivy/report.json");
 
     /// A fake `PATH` holding the named stub binaries.
     fn stub_path(names: &[&str]) -> (tempfile::TempDir, OsString) {
@@ -662,6 +664,8 @@ mod tests {
                     b"2.1.1\n"
                 } else if id.contains("luacheck") {
                     b"1.2.0\n"
+                } else if id.contains("trivy") {
+                    b"0.76.1\n"
                 } else {
                     return output(Some(1), b"", "mise ERROR unknown");
                 };
@@ -689,6 +693,11 @@ mod tests {
                 "semgrep" => output(Some(0), b"1.163.0\n", ""),
                 "bearer" => output(Some(0), b"bearer version 2.1.1, build abc\n", ""),
                 "luacheck" => output(Some(0), b"Luacheck: 1.2.0\nLua: 5.4\n", ""),
+                "trivy" => output(
+                    Some(0),
+                    b"Version: 0.76.1\nVulnerability DB:\n  Version: 2\n",
+                    "",
+                ),
                 _ => output(Some(0), b"0.0.0\n", ""),
             });
         }
@@ -696,6 +705,7 @@ mod tests {
             "semgrep" => output(Some(0), SEMGREP, ""),
             "bearer" => output(Some(0), BEARER, ""),
             "luacheck" => output(Some(1), LUACHECK, ""),
+            "trivy" => output(Some(0), TRIVY, ""),
             _ => output(Some(0), b"ok\n", ""),
         })
     }
@@ -724,7 +734,7 @@ mod tests {
 
     #[test]
     fn scans_every_installed_tool_offline_and_merges_the_findings() {
-        let (_dir, path_var) = stub_path(&["semgrep", "bearer", "luacheck"]);
+        let (_dir, path_var) = stub_path(&["semgrep", "bearer", "luacheck", "trivy"]);
         let target = tempfile::tempdir().unwrap();
         let runner = FakeRunner::new(scripted);
         let mut prompter = FixedAnswer(false);
@@ -740,7 +750,7 @@ mod tests {
 
         let report = scan(target.path(), &Options::default(), &mut deps).unwrap();
 
-        assert_eq!(report.tools.len(), 3);
+        assert_eq!(report.tools.len(), 4);
         assert!(
             report
                 .tools
@@ -751,14 +761,19 @@ mod tests {
         );
         assert_eq!(
             report.tools.iter().map(|t| t.findings).sum::<usize>(),
-            9 + 7 + 6
+            9 + 7 + 6 + 24,
+            "trivy: 9 vulnerabilities, 14 misconfigurations, 1 secret"
         );
         assert_eq!(report.tools[0].version.as_deref(), Some("1.163.0"));
         assert_eq!(
             report.summary.duplicates_removed, 4,
             "bearer and semgrep agree on four lines"
         );
-        assert_eq!(report.summary.total, 18);
+        assert_eq!(
+            report.summary.total,
+            18 + 24,
+            "trivy's files overlap with nobody's"
+        );
         assert_eq!(
             report.tools[0].scanned_files,
             Some(3),
@@ -770,11 +785,17 @@ mod tests {
             "semgrep's rule errors travel into the report"
         );
         assert_eq!(report.tools[1].scanned_files, None);
+        assert_eq!(report.tools[2].tool, "trivy");
+        assert_eq!(
+            report.tools[2].diagnostics.len(),
+            3,
+            "trivy's check summaries"
+        );
         assert_eq!(report.target, target.path().canonicalize().unwrap());
 
         // Every scan ran in the target with the scanner's own environment, after a version call.
         let calls = runner.calls();
-        assert_eq!(calls.len(), 6);
+        assert_eq!(calls.len(), 8);
         let scans: Vec<_> = calls.iter().filter(|c| !is_version_call(c)).collect();
         // The target is canonicalised first: on a runner where /tmp is a symlink the two differ.
         let canonical = target.path().canonicalize().unwrap();
@@ -912,7 +933,14 @@ mod tests {
                 reason: "not installed".into()
             }
         );
-        assert_eq!(report.tools[2].status, ToolStatus::Completed);
+        assert_eq!(
+            report.tools[2].status,
+            ToolStatus::Skipped {
+                reason: "not installed".into()
+            },
+            "trivy"
+        );
+        assert_eq!(report.tools[3].status, ToolStatus::Completed, "luacheck");
         assert_eq!(report.summary.total, 6);
         let text = String::from_utf8(log).unwrap();
         assert!(text.contains("install mise"), "{text}");
@@ -1006,7 +1034,7 @@ mod tests {
             matches!(err, PipelineError::UnknownTool { ref name, .. } if name == "codeql"),
             "{err}"
         );
-        assert!(err.to_string().contains("semgrep, bearer, luacheck"));
+        assert!(err.to_string().contains("semgrep, bearer, trivy, luacheck"));
     }
 
     #[test]
@@ -1039,9 +1067,9 @@ mod tests {
             report.tools[0]
         );
         assert!(
-            matches!(&report.tools[2].status, ToolStatus::Failed { reason } if reason.contains("bad --formatter")),
+            matches!(&report.tools[3].status, ToolStatus::Failed { reason } if reason.contains("bad --formatter")),
             "{:?}",
-            report.tools[2]
+            report.tools[3]
         );
         assert!(report.has_failures());
         assert!(report.is_clean());
@@ -1441,7 +1469,7 @@ mod tests {
             log: &mut log,
         };
         let infos = inventory(&mut deps);
-        assert_eq!(infos.len(), 3);
+        assert_eq!(infos.len(), 4);
         assert_eq!(
             infos[0].path.as_deref(),
             Some(dir.path().join("semgrep").as_path())
@@ -1449,9 +1477,11 @@ mod tests {
         assert_eq!(infos[0].installed, Some(Version::new(1, 163, 0)));
         assert_eq!(infos[0].latest, Some(Version::new(1, 183, 0)));
         assert_eq!(infos[0].mise_id, "semgrep");
-        assert_eq!(infos[2].path, None);
-        assert_eq!(infos[2].installed, None);
-        assert_eq!(infos[2].mise_id, "ubi:lunarmodules/luacheck");
+        assert_eq!(infos[2].mise_id, "trivy");
+        assert_eq!(infos[2].latest, Some(Version::new(0, 76, 1)));
+        assert_eq!(infos[3].path, None);
+        assert_eq!(infos[3].installed, None);
+        assert_eq!(infos[3].mise_id, "ubi:lunarmodules/luacheck");
         let mut out = Vec::new();
         write_inventory(&infos, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();

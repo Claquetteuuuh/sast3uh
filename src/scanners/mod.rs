@@ -7,6 +7,7 @@
 pub mod bearer;
 pub mod luacheck;
 pub mod semgrep;
+pub mod trivy;
 
 use std::ffi::OsString;
 
@@ -26,6 +27,8 @@ pub struct ScanOptions {
     pub semgrep_profile: crate::packs::Profile,
     /// What the target holds, filled by the pipeline before the scanners run.
     pub detected: crate::detect::Detected,
+    /// No network at all: scanners that fetch databases use what they have cached.
+    pub offline: bool,
 }
 
 impl Default for ScanOptions {
@@ -34,6 +37,7 @@ impl Default for ScanOptions {
             semgrep_configs: None,
             semgrep_profile: crate::packs::Profile::Exhaustive,
             detected: crate::detect::Detected::default(),
+            offline: false,
         }
     }
 }
@@ -183,6 +187,7 @@ pub fn registry() -> Vec<Box<dyn Scanner>> {
     vec![
         Box::new(semgrep::Semgrep),
         Box::new(bearer::Bearer),
+        Box::new(trivy::Trivy),
         Box::new(luacheck::Luacheck),
     ]
 }
@@ -281,7 +286,7 @@ mod tests {
     #[test]
     fn registry_names_are_unique_and_lookup_is_case_insensitive() {
         let names = names();
-        assert_eq!(names, vec!["semgrep", "bearer", "luacheck"]);
+        assert_eq!(names, vec!["semgrep", "bearer", "trivy", "luacheck"]);
         assert!(by_name("Semgrep").is_some());
         assert!(by_name(" luacheck ").is_some());
         assert!(by_name("codeql").is_none());

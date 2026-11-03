@@ -162,7 +162,7 @@ fn write_packs(
     }
     writeln!(
         out,
-        "bearer: sast + secrets scanners · luacheck: std max (+ the project's .luacheckrc)"
+        "bearer: sast + secrets scanners · trivy: vuln, misconfig, secret, license scanners · luacheck: std max (+ the project's .luacheckrc)"
     )
 }
 

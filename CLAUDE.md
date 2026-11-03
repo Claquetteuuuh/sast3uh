@@ -2,8 +2,8 @@
 
 ## Project overview
 
-sasteuuuh is a Rust CLI: a hardened wrapper that runs several static analysers
-(Semgrep, Bearer, Luacheck today) over a directory, parses what each one says,
+sasteuuuh is a Rust CLI: a hardened wrapper that runs several analysers
+(Semgrep, Bearer, Trivy, Luacheck today) over a directory, parses what each one says,
 removes the duplicates and writes one report — text, JSON, YAML, XML or HTML —
 with one exit code. Before scanning it checks each scanner against the newest
 version mise knows and offers (asks) to install or update it through mise —
@@ -39,7 +39,7 @@ sasteuuuh/
 │   ├── cli.rs           # clap definition only — no behaviour
 │   ├── pipeline.rs      # locate (mise which → PATH) → version → install/update (ask) →
 │   │                    # run → parse → dedup → Report
-│   ├── scanners/        # Scanner trait + registry; semgrep.rs, bearer.rs, luacheck.rs
+│   ├── scanners/        # Scanner trait + registry; semgrep.rs, bearer.rs, trivy.rs, luacheck.rs
 │   │                    # (args, env, output → findings, mise id) — pure glue
 │   ├── detect.rs        # languages + markers of the target from file names (no reads)
 │   ├── packs.rs         # measured Semgrep pack catalogue, selection by language/profile
@@ -58,6 +58,7 @@ sasteuuuh/
 ├── clippy.toml          # thresholds + disallowed methods (Command::new, set_var…)
 ├── deny.toml            # advisories, license allow-list, bans, crates.io only
 ├── .pre-commit-config.yaml
+├── .mise.toml           # gate tools pinned (Plumber), run with `mise exec`
 ├── .plumber.yaml        # CI/CD trust policy (every control listed explicitly)
 ├── bearer.yml, .grype.yaml
 └── .github/workflows/   # CI, cargo-deny, Bearer, Grype, Semgrep, CodeQL,
@@ -107,7 +108,8 @@ Run ALL of it before EVERY `git commit`. No exceptions.
 git add -A
 
 # 1. Pre-commit (hygiene, secrets, typos, yaml/md/actions lint, zizmor,
-#    cargo fmt / clippy / doc / test, cargo-deny, Bearer, Grype, Plumber)
+#    cargo fmt / clippy / doc / test, cargo-deny, Bearer, Grype, Plumber —
+#    Plumber runs on EVERY commit, through the version pinned in .mise.toml)
 pre-commit run --all-files
 # If a hook "modified files", stage its fixes and run it again until it passes.
 
@@ -126,9 +128,16 @@ pre-commit run --all-files --hook-stage pre-push
 - Bearer Critical/High ⇒ fix the flagged pattern
 - Plumber: any finding fails (`--min-points 100`); a new third-party action
   must be SHA-pinned AND allow-listed in `.plumber.yaml`
-- Keep the `bearer`, `grype`, `semgrep`, `plumber` binaries current — CI
-  runs the latest release, and an older local copy has fewer rules: it
-  waves through what CI then blocks
+- Keep the `bearer`, `grype`, `semgrep` binaries current — CI runs the
+  latest release, and an older local copy has fewer rules: it waves through
+  what CI then blocks. Plumber is the exception: `.mise.toml` pins the exact
+  version the CI action uses, and the hook runs it with `mise exec` so the
+  `/usr/bin/plumber` of the machine is never what gates a commit. Bump both
+  together (the action SHA and the pin).
+- **Reproduce a CI failure before fixing it**: a fresh clone with an empty
+  `HOME` (`HOME=$(mktemp -d)`) reproduces what the runner sees — Bearer 2.1.3
+  without cached rules writes "The security report is not yet available…"
+  instead of SARIF and exits 1, which a warm local cache never shows.
 - Medium/Low from Grype or Bearer are acceptable; everything from
   cargo-deny, clippy, zizmor and Plumber is blocking
 
@@ -207,9 +216,16 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
   deduplicates identical rule ids across `--config`s (measured: 3
   overlapping packs, 0 duplicate findings), so overlap costs download time
   only — selecting by language is what keeps a scan fast.
-- Bearer runs `--scanner sast,secrets`; Luacheck runs with the default
+- Bearer runs `--scanner sast,secrets`; Trivy runs `fs --scanners
+  vuln,misconfig,secret,license --include-dev-deps` (plus
+  `--detection-priority comprehensive --license-full` in the exhaustive
+  profile, and `--skip-db-update --skip-java-db-update --skip-check-update
+  --offline-scan` under `--offline`); Luacheck runs with the default
   `std = max` and the project's `.luacheckrc`. A new scanner's adapter
   documents its own "most exhaustive" invocation in its `scan_args`.
+- Trivy masks the secrets it reports (`***`); the masked `Match` is the
+  finding's message and the masked code lines its snippet — nothing else of
+  a secret is ever kept.
 
 ## Secure coding rules (the point of the project)
 
@@ -296,7 +312,8 @@ there is a first release; until then there is nothing to publish.
 | `bearer.yml`            | Bearer SAST — no Rust rules, covers helper scripts the day there are some (+ weekly) |
 | `semgrep.yml`           | Semgrep `p/rust` + `p/secrets` (+ weekly)                                            |
 | `codeql.yml`            | CodeQL Rust, security-and-quality (+ weekly)                                         |
-| `ci-hardening.yml`      | zizmor + Plumber on the workflows and repo settings                                  |
+| `ci-hardening.yml`      | zizmor on the workflows                                                              |
+| `plumber.yml`           | Plumber: CI/CD trust policy on the workflows and repo settings, 100 points or fail   |
 | `scorecard.yml`         | OpenSSF Scorecard                                                                    |
 | `dependency-review.yml` | PR gate on new vulnerable / copyleft dependencies                                    |
 | `pre-commit.yml`        | the hygiene hooks only (the rest is SKIPped — see above)                             |
