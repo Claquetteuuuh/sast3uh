@@ -26,9 +26,10 @@ finding, at the worst severity, with both tools listed.
 
 ## Installation
 
-sasteuuuh is a single static binary. Pick one of the three ways below, then
-install the scanners (next section) — or let sasteuuuh offer to install them
-the first time you run a scan.
+sasteuuuh is a single binary with no runtime dependency beyond the system C
+library. Pick one of the three ways below, then install the scanners (next
+section) — or let sasteuuuh offer to install them the first time you run a
+scan.
 
 ### 1. Through mise (recommended)
 
@@ -43,10 +44,13 @@ sasteuuuh --version
 
 ### 2. Prebuilt binary from a release
 
-Every release ships `sasteuuuh-<version>-<target>.tar.gz` for
-`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and
-`aarch64-apple-darwin`, each with a `.sha256`, a global `checksums.txt`,
-and a build-provenance attestation signed by the release workflow.
+Every release ships, for `x86_64-unknown-linux-gnu`,
+`aarch64-unknown-linux-gnu` and `aarch64-apple-darwin`, the bare executable
+`sasteuuuh-<version>-<target>` (download, `chmod +x`, run) and an archive
+`sasteuuuh-<version>-<target>.tar.gz` with README and SECURITY.md — each with
+a `.sha256`, all listed in `checksums.txt`, and each carrying a
+build-provenance attestation signed by the release workflow. (v0.1.0 shipped
+the archives only.)
 
 ```bash
 V=0.1.0; T=x86_64-unknown-linux-gnu   # pick your target
@@ -56,6 +60,15 @@ sha256sum --ignore-missing -c checksums.txt                 # integrity
 gh attestation verify "sasteuuuh-$V-$T.tar.gz" --repo Claquetteuuuh/sasteuuuh  # provenance
 tar -xzf "sasteuuuh-$V-$T.tar.gz"
 install -m 0755 "sasteuuuh-$V-$T/sasteuuuh" ~/.local/bin/   # anywhere on your PATH
+```
+
+Or the bare executable, same checks:
+
+```bash
+gh release download "v$V" --repo Claquetteuuuh/sasteuuuh --pattern "sasteuuuh-$V-$T" --pattern checksums.txt
+sha256sum --ignore-missing -c checksums.txt
+gh attestation verify "sasteuuuh-$V-$T" --repo Claquetteuuuh/sasteuuuh
+install -m 0755 "sasteuuuh-$V-$T" ~/.local/bin/sasteuuuh
 ```
 
 Without the `gh` CLI, the same files are on the
