@@ -24,6 +24,77 @@ one that fails marks the report incomplete (exit 3). The same problem
 reported by two scanners on the same line with a CWE in common is one
 finding, at the worst severity, with both tools listed.
 
+## Installation
+
+sasteuuuh is a single static binary. Pick one of the three ways below, then
+install the scanners (next section) — or let sasteuuuh offer to install them
+the first time you run a scan.
+
+### 1. Through mise (recommended)
+
+[mise](https://mise.jdx.dev) installs the right archive for your platform
+straight from the GitHub release and keeps it updated:
+
+```bash
+mise use -g github:Claquetteuuuh/sasteuuuh      # latest release, on your PATH
+mise use -g github:Claquetteuuuh/sasteuuuh@0.1.0 # or a pinned version
+sasteuuuh --version
+```
+
+### 2. Prebuilt binary from a release
+
+Every release ships `sasteuuuh-<version>-<target>.tar.gz` for
+`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and
+`aarch64-apple-darwin`, each with a `.sha256`, a global `checksums.txt`,
+and a build-provenance attestation signed by the release workflow.
+
+```bash
+V=0.1.0; T=x86_64-unknown-linux-gnu   # pick your target
+gh release download "v$V" --repo Claquetteuuuh/sasteuuuh \
+  --pattern "sasteuuuh-$V-$T.tar.gz" --pattern checksums.txt
+sha256sum --ignore-missing -c checksums.txt                 # integrity
+gh attestation verify "sasteuuuh-$V-$T.tar.gz" --repo Claquetteuuuh/sasteuuuh  # provenance
+tar -xzf "sasteuuuh-$V-$T.tar.gz"
+install -m 0755 "sasteuuuh-$V-$T/sasteuuuh" ~/.local/bin/   # anywhere on your PATH
+```
+
+Without the `gh` CLI, the same files are on the
+[releases page](https://github.com/Claquetteuuuh/sasteuuuh/releases).
+
+### 3. From source
+
+Needs Rust 1.98 or newer (`rust-toolchain.toml` pins the exact version when
+you build inside the clone). The crate is not on crates.io on purpose.
+
+```bash
+# straight from the tag, into ~/.cargo/bin
+cargo install --locked --git https://github.com/Claquetteuuuh/sasteuuuh --tag v0.1.0
+
+# or from a clone
+git clone https://github.com/Claquetteuuuh/sasteuuuh && cd sasteuuuh
+cargo build --release --locked        # → target/release/sasteuuuh
+cargo test --all-features --locked    # 175 tests, no scanner needed
+```
+
+The release profile uses fat LTO, keeps integer overflow checks on and
+strips symbols; `--locked` makes sure the audited `Cargo.lock` is what gets
+built.
+
+### Installing the scanners
+
+sasteuuuh drives the scanners it finds; it never bundles them. With mise on
+your `PATH`, a scan offers to install a missing one and to update an
+outdated one (`--update ask`, the default; `--update always` to say yes to
+everything, `--offline` for no lookup at all). To install them yourself:
+
+```bash
+mise use -g semgrep aqua:Bearer/bearer trivy ubi:lunarmodules/luacheck
+sasteuuuh tools      # installed path, version and latest release of each
+```
+
+Each scanner is resolved with `mise which` first, then on `PATH`, so a
+mise-managed version always wins over a stray system one.
+
 ## Rule packs: exhaustive by default
 
 Semgrep is only as good as the rules it is given. sasteuuuh looks at what the
