@@ -130,11 +130,11 @@ jobs:
         run: cargo build --release --locked
 
       - name: Smoke test the binary
-        run: ./target/release/sasteuuuh --version && ./target/release/sasteuuuh tools
+        run: ./target/release/sast3uh --version && ./target/release/sast3uh tools
 
       - name: Upload binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: sasteuuuh-linux-x86_64
-          path: target/release/sasteuuuh
+          name: sast3uh-linux-x86_64
+          path: target/release/sast3uh
           retention-days: 7

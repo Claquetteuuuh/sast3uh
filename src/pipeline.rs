@@ -378,7 +378,7 @@ fn offer_install(scanner: &dyn Scanner, options: &Options, deps: &mut Deps<'_>) 
     let name = scanner.name();
     let Some(mise) = deps.mise.clone() else {
         deps.log(format!(
-            "{name}: not installed (install mise to let sasteuuuh install it: https://mise.jdx.dev)"
+            "{name}: not installed (install mise to let sast3uh install it: https://mise.jdx.dev)"
         ));
         return None;
     };
@@ -508,7 +508,7 @@ fn decide(
     }
 }
 
-/// One line of `sasteuuuh tools`.
+/// One line of `sast3uh tools`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolInfo {
     /// Scanner name.

@@ -1,6 +1,6 @@
 # Security Policy
 
-sasteuuuh runs other people's scanners on other people's code. A bug in it
+sast3uh runs other people's scanners on other people's code. A bug in it
 is a security bug by default, and it is treated as one.
 
 ## Supported versions
@@ -18,9 +18,9 @@ Only the latest release and `main` receive security fixes.
 **Do not open a public issue.** Report it privately through GitHub's
 vulnerability reporting:
 
-<https://github.com/Claquetteuuuh/sasteuuuh/security/advisories/new>
+<https://github.com/Claquetteuuuh/sast3uh/security/advisories/new>
 
-Include the version (`sasteuuuh --version`), the scanner(s) involved, a
+Include the version (`sast3uh --version`), the scanner(s) involved, a
 minimal reproduction and the impact you see. You will get an
 acknowledgement within 72 hours and a fix or a mitigation plan within 14
 days for a confirmed issue. Credit is given in the advisory unless you
@@ -45,7 +45,7 @@ prefer otherwise.
 - Every scanner is spawned with an argument list, never a shell string,
   with a scrubbed environment, a working directory, a timeout and an
   output cap. Scanners are installed and updated only through mise, only
-  after the user says yes on a terminal; sasteuuuh has no network code.
+  after the user says yes on a terminal; sast3uh has no network code.
 - Every commit goes through pre-commit (secrets, lint, tests), Bearer,
   Grype, cargo-deny; every push through Semgrep; CI adds CodeQL, zizmor,
   Plumber, Dependency Review and OpenSSF Scorecard.

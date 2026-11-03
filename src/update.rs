@@ -1,6 +1,6 @@
 //! Installing and updating scanners through [mise](https://mise.jdx.dev).
 //!
-//! sasteuuuh never downloads anything itself: mise is the one tool manager, it resolves a
+//! sast3uh never downloads anything itself: mise is the one tool manager, it resolves a
 //! scanner's binary (`mise which`), knows the newest version (`mise latest`) and installs or
 //! updates it (`mise use -g`). Every call goes through [`crate::exec`] like a scanner would,
 //! so the whole flow is tested with a scripted runner.

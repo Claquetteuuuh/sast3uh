@@ -1,13 +1,13 @@
-# CLAUDE.md — sasteuuuh
+# CLAUDE.md — sast3uh
 
 ## Project overview
 
-sasteuuuh is a Rust CLI: a hardened wrapper that runs several analysers
+sast3uh is a Rust CLI: a hardened wrapper that runs several analysers
 (Semgrep, Bearer, Trivy, Luacheck today) over a directory, parses what each one says,
 removes the duplicates and writes one report — text, JSON, YAML, XML or HTML —
 with one exit code. Before scanning it checks each scanner against the newest
 version mise knows and offers (asks) to install or update it through mise —
-sasteuuuh never downloads anything itself. It runs other people's binaries
+sast3uh never downloads anything itself. It runs other people's binaries
 on other people's code, so **a bug here is a security bug by default**.
 Security and the absence of regressions come first; features come second.
 
@@ -32,9 +32,9 @@ exists because something slipped through somewhere once.
 ## Architecture
 
 ```text
-sasteuuuh/
+sast3uh/
 ├── src/
-│   ├── main.rs          # thin: argv → sasteuuuh::run → exit code
+│   ├── main.rs          # thin: argv → sast3uh::run → exit code
 │   ├── lib.rs           # run / run_with (injectable Deps), exit codes, --fail-on gate
 │   ├── cli.rs           # clap definition only — no behaviour
 │   ├── pipeline.rs      # locate (mise which → PATH) → version → install/update (ask) →
@@ -83,7 +83,7 @@ They are documented in `src/lib.rs` and asserted in `tests/cli.rs`.
    tolerance test.
 3. Register it in `scanners::registry()`; `names()`/`by_name` follow.
 4. Add the stub to `tests/cli.rs` (`Stubs::new`) and extend the end-to-end
-   assertions; `sasteuuuh tools` picks it up by itself.
+   assertions; `sast3uh tools` picks it up by itself.
 
 ## Dev commands
 
@@ -207,7 +207,7 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
   listed pack, not style-only — each with the languages or markers
   (`src/detect.rs`) that call for it, a profile tier and the rule count
   measured on 2026-11-02. The pipeline detects the target's languages once
-  and selects the packs; `sasteuuuh packs DIR` shows the selection.
+  and selects the packs; `sast3uh packs DIR` shows the selection.
 - **Re-measure before editing the catalogue**: the listing is
   `https://semgrep.dev/api/registry/rulesets` (305 rulesets, with author,
   languages and tags) and a pack's rules are
@@ -265,7 +265,7 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
 - **Installs and updates go through mise and ask first**: the prompt only
   appears on a terminal, a non-interactive run never changes the machine (it
   prints the `mise use -g` line instead), `--update always` is the explicit
-  opt-in. sasteuuuh has no HTTP client; mise is the only child that receives
+  opt-in. sast3uh has no HTTP client; mise is the only child that receives
   `MISE_*` and `GITHUB_TOKEN`, and a scanner never does.
 - **Reports are output encoding**: XML and HTML escape every value, HTML
   ships a CSP with no script, and only `http(s)` URLs become links.

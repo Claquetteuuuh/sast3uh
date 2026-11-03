@@ -12,7 +12,7 @@ use crate::model::{Report, Severity, ToolStatus};
 pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         out,
-        "sasteuuuh report — {} ({})",
+        "sast3uh report — {} ({})",
         report.target.display(),
         report.generated_at
     )?;

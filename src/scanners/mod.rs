@@ -151,13 +151,13 @@ pub(crate) fn value_text(value: &serde_json::Value) -> String {
     }
 }
 
-/// A scanner sasteuuuh can drive.
+/// A scanner sast3uh can drive.
 pub trait Scanner: Send + Sync {
     /// Display name (also the `tool` field of its findings).
     fn name(&self) -> &'static str;
     /// Executable looked up on `PATH`.
     fn binary(&self) -> &'static str;
-    /// What it covers, for `sasteuuuh tools`.
+    /// What it covers, for `sast3uh tools`.
     fn purpose(&self) -> &'static str;
     /// The mise tool id that installs it (`semgrep`, `aqua:Bearer/bearer`…), used when mise
     /// does not already manage the binary under another id.

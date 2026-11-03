@@ -440,8 +440,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "sasteuuuh"
-version = "0.1.0"
+name = "sast3uh"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",

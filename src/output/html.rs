@@ -51,11 +51,11 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
         out,
         r#"<meta name="viewport" content="width=device-width, initial-scale=1">"#
     )?;
-    writeln!(out, "<title>sasteuuuh report</title>")?;
+    writeln!(out, "<title>sast3uh report</title>")?;
     writeln!(out, "<style>{STYLE}</style>")?;
     writeln!(out, "</head>")?;
     writeln!(out, "<body><main>")?;
-    writeln!(out, "<h1>sasteuuuh report</h1>")?;
+    writeln!(out, "<h1>sast3uh report</h1>")?;
     writeln!(
         out,
         r#"<p class="meta"><code>{}</code> · {}</p>"#,

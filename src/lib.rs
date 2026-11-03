@@ -1,10 +1,10 @@
-//! sasteuuuh — one SAST to run them all.
+//! sast3uh — one SAST to run them all.
 //!
 //! A hardened wrapper that drives several static analysers (Semgrep, Bearer, Luacheck, more
 //! to come) over a directory, parses what each one says, removes the duplicates and writes a
 //! single report — text, JSON, YAML, XML or HTML — with a single exit code. Before scanning it
 //! checks each scanner against the latest version mise can install and offers to install or
-//! update it; sasteuuuh itself never touches the network.
+//! update it; sast3uh itself never touches the network.
 //!
 //! The crate is a library first: the binary in `main.rs` only calls [`run`], so every behaviour
 //! — argument parsing, scanning, rendering, exit codes — is covered by tests that never spawn
@@ -59,7 +59,7 @@ pub const EXIT_USAGE: u8 = 2;
 /// The scan could not run, or a scanner failed (the report is incomplete).
 pub const EXIT_ERROR: u8 = 3;
 
-/// `true` when `err` comes from writing to a closed pipe (`sasteuuuh … | head`).
+/// `true` when `err` comes from writing to a closed pipe (`sast3uh … | head`).
 pub fn is_broken_pipe(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         cause
@@ -263,7 +263,7 @@ mod tests {
     fn scan_with_no_installed_tool_is_clean_and_says_so() {
         let target = tempfile::tempdir().expect("tempdir");
         let cli = parse(&[
-            "sasteuuuh",
+            "sast3uh",
             "scan",
             target.path().to_str().expect("utf-8"),
             "--offline",
@@ -282,18 +282,11 @@ mod tests {
         let target = tempfile::tempdir().expect("tempdir");
         let path = target.path().to_str().expect("utf-8");
         let runner = FakeRunner::new(luacheck_runner);
-        let cli = parse(&[
-            "sasteuuuh",
-            "scan",
-            path,
-            "--offline",
-            "--tools",
-            "luacheck",
-        ]);
+        let cli = parse(&["sast3uh", "scan", path, "--offline", "--tools", "luacheck"]);
         let (code, _, _) = drive(cli, &["luacheck"], &runner);
         assert_eq!(code, ExitCode::from(EXIT_FINDINGS));
         let cli = parse(&[
-            "sasteuuuh",
+            "sast3uh",
             "scan",
             path,
             "--offline",
@@ -316,7 +309,7 @@ mod tests {
             Ok(output(Some(3), b"", "cannot read src"))
         });
         let cli = parse(&[
-            "sasteuuuh",
+            "sast3uh",
             "scan",
             target.path().to_str().expect("utf-8"),
             "--offline",
@@ -339,7 +332,7 @@ mod tests {
         let runner = FakeRunner::new(luacheck_runner);
         let report_path = target.path().join("report.yml");
         let cli = parse(&[
-            "sasteuuuh",
+            "sast3uh",
             "scan",
             path,
             "--offline",
@@ -355,7 +348,7 @@ mod tests {
         assert!(yaml.contains("schema_version: 2"), "{yaml}");
 
         let cli = parse(&[
-            "sasteuuuh",
+            "sast3uh",
             "scan",
             path,
             "--offline",
@@ -380,7 +373,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let missing = dir.path().join("nope");
         let cli = parse(&[
-            "sasteuuuh",
+            "sast3uh",
             "scan",
             missing.to_str().expect("utf-8"),
             "--offline",
@@ -406,7 +399,7 @@ mod tests {
     fn an_unknown_tool_is_an_error() {
         let target = tempfile::tempdir().expect("tempdir");
         let cli = parse(&[
-            "sasteuuuh",
+            "sast3uh",
             "scan",
             target.path().to_str().expect("utf-8"),
             "--offline",
@@ -435,7 +428,7 @@ mod tests {
     fn packs_lists_what_the_target_calls_for() {
         let target = tempfile::tempdir().expect("tempdir");
         std::fs::write(target.path().join("main.go"), b"package main").expect("write");
-        let cli = parse(&["sasteuuuh", "packs", target.path().to_str().expect("utf-8")]);
+        let cli = parse(&["sast3uh", "packs", target.path().to_str().expect("utf-8")]);
         let runner = FakeRunner::new(|_| panic!("nothing must run"));
         let (code, out, _) = drive(cli, &[], &runner);
         assert_eq!(code, ExitCode::from(EXIT_CLEAN));
@@ -449,7 +442,7 @@ mod tests {
 
     #[test]
     fn tools_lists_every_scanner() {
-        let cli = parse(&["sasteuuuh", "tools", "--offline"]);
+        let cli = parse(&["sast3uh", "tools", "--offline"]);
         let runner = FakeRunner::new(luacheck_runner);
         let (code, out, _) = drive(cli, &["luacheck"], &runner);
         assert_eq!(code, ExitCode::from(EXIT_CLEAN));
@@ -478,11 +471,11 @@ mod tests {
     #[test]
     fn help_is_not_an_error_and_a_bad_flag_is_a_usage_error() {
         assert_eq!(
-            run(["sasteuuuh", "--help"]).expect("help prints"),
+            run(["sast3uh", "--help"]).expect("help prints"),
             ExitCode::from(EXIT_CLEAN)
         );
         assert_eq!(
-            run(["sasteuuuh", "--definitely-not-a-flag"]).expect("usage error"),
+            run(["sast3uh", "--definitely-not-a-flag"]).expect("usage error"),
             ExitCode::from(EXIT_USAGE)
         );
     }

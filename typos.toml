@@ -4,6 +4,6 @@ extend-exclude = ["target/", "Cargo.lock", "*.sarif", "tests/fixtures/"]
 
 [default.extend-words]
 # Project name, not a typo.
-sasteuuuh = "sasteuuuh"
+sast3uh = "sast3uh"
 # Clojure data files (.edn), not "end".
 edn = "edn"

@@ -14,7 +14,7 @@ use crate::pipeline::UpdatePolicy;
 
 /// One SAST to run them all.
 #[derive(Debug, Parser)]
-#[command(name = "sasteuuuh", version, about, propagate_version = true)]
+#[command(name = "sast3uh", version, about, propagate_version = true)]
 pub struct Cli {
     /// What to do.
     #[command(subcommand)]
@@ -26,7 +26,7 @@ pub struct Cli {
 pub enum Command {
     /// Run every available scanner on a directory and merge the findings.
     Scan(ScanArgs),
-    /// List the scanners sasteuuuh knows about: installed path, version, latest release.
+    /// List the scanners sast3uh knows about: installed path, version, latest release.
     Tools(ToolsArgs),
     /// Show what a directory holds and which Semgrep rule packs a scan of it would run.
     Packs(PacksArgs),
@@ -106,7 +106,7 @@ mod tests {
     use super::*;
 
     fn scan(args: &[&str]) -> ScanArgs {
-        let mut full = vec!["sasteuuuh", "scan"];
+        let mut full = vec!["sast3uh", "scan"];
         full.extend_from_slice(args);
         match Cli::try_parse_from(full).unwrap().command {
             Command::Scan(args) => args,
@@ -168,10 +168,10 @@ mod tests {
     #[test]
     fn bad_values_are_rejected() {
         for argv in [
-            vec!["sasteuuuh", "scan", "--format", "pdf"],
-            vec!["sasteuuuh", "scan", "--fail-on", "urgent"],
-            vec!["sasteuuuh", "scan", "--update", "maybe"],
-            vec!["sasteuuuh", "scan", "--timeout", "soon"],
+            vec!["sast3uh", "scan", "--format", "pdf"],
+            vec!["sast3uh", "scan", "--fail-on", "urgent"],
+            vec!["sast3uh", "scan", "--update", "maybe"],
+            vec!["sast3uh", "scan", "--timeout", "soon"],
         ] {
             let err = Cli::try_parse_from(&argv).unwrap_err();
             // An enum rejects with InvalidValue, a FromStr type with ValueValidation.
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn packs_takes_a_directory_and_a_profile() {
         match Cli::try_parse_from([
-            "sasteuuuh",
+            "sast3uh",
             "packs",
             "/tmp/x",
             "--semgrep-profile",
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn tools_has_an_offline_flag() {
-        match Cli::try_parse_from(["sasteuuuh", "tools", "--offline"])
+        match Cli::try_parse_from(["sast3uh", "tools", "--offline"])
             .unwrap()
             .command
         {
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn a_subcommand_is_required() {
-        let err = Cli::try_parse_from(["sasteuuuh"]).unwrap_err();
+        let err = Cli::try_parse_from(["sast3uh"]).unwrap_err();
         assert_eq!(
             err.kind(),
             clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand

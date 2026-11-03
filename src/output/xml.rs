@@ -14,7 +14,7 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
     writeln!(out, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
     writeln!(
         out,
-        r#"<sasteuuuh-report schema-version="{}" generated-at="{}" target="{}">"#,
+        r#"<sast3uh-report schema-version="{}" generated-at="{}" target="{}">"#,
         report.schema_version,
         escape(&report.generated_at),
         escape(&report.target.to_string_lossy())
@@ -77,7 +77,7 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
         write_finding(f, out)?;
     }
     writeln!(out, "  </findings>")?;
-    writeln!(out, "</sasteuuuh-report>")
+    writeln!(out, "</sast3uh-report>")
 }
 
 fn write_finding(f: &Finding, out: &mut impl Write) -> std::io::Result<()> {
@@ -196,7 +196,7 @@ mod tests {
         render(&sample_report(), &mut out).unwrap();
         let xml = String::from_utf8(out).unwrap();
         assert!(xml.starts_with("<?xml version=\"1.0\""));
-        assert!(xml.contains(r#"<sasteuuuh-report schema-version="2" generated-at="2026-11-02T12:00:00Z" target="/work/project">"#), "{xml}");
+        assert!(xml.contains(r#"<sast3uh-report schema-version="2" generated-at="2026-11-02T12:00:00Z" target="/work/project">"#), "{xml}");
         assert!(xml.contains(r#"<tool name="bearer" version="2.1.1" state="skipped" findings="0" duration-ms="10" reason="no &lt;supported&gt; files"/>"#), "{xml}");
         assert!(xml.contains(r#"<tool name="semgrep" version="1.163.0" state="completed" findings="9" duration-ms="1234" scanned-files="3">"#), "{xml}");
         assert!(
@@ -242,7 +242,7 @@ mod tests {
             xml.contains("<message>\u{FFFD}control\u{FFFD}</message>"),
             "control characters are replaced"
         );
-        assert!(xml.ends_with("</sasteuuuh-report>\n"));
+        assert!(xml.ends_with("</sast3uh-report>\n"));
         // No raw markup from the hostile strings survives.
         assert!(!xml.contains("<b>.js"));
         assert!(!xml.contains("<message> &"));

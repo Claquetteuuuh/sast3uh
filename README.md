@@ -1,4 +1,4 @@
-# sasteuuuh
+# sast3uh
 
 One SAST to run them all. A hardened Rust CLI that drives several static
 analysers (SAST, SCA, IaC, secrets, licenses) over a directory, parses what each one says, removes the
@@ -16,7 +16,7 @@ latest GitHub release and offers to update it.
 | luacheck | Lua linter: globals, unused, syntax                               | `ubi:lunarmodules/luacheck` |
 
 Scanners are installed and updated through [mise](https://mise.jdx.dev):
-sasteuuuh resolves each binary with `mise which` (falling back to `PATH`),
+sast3uh resolves each binary with `mise which` (falling back to `PATH`),
 asks `mise latest` for the newest version and runs `mise use -g <id>@<v>`
 when you say yes. It never downloads anything itself. A scanner that is
 missing is offered for install; one that is behind is offered for update;
@@ -26,9 +26,9 @@ finding, at the worst severity, with both tools listed.
 
 ## Installation
 
-sasteuuuh is a single binary with no runtime dependency beyond the system C
+sast3uh is a single binary with no runtime dependency beyond the system C
 library. Pick one of the three ways below, then install the scanners (next
-section) — or let sasteuuuh offer to install them the first time you run a
+section) — or let sast3uh offer to install them the first time you run a
 scan.
 
 ### 1. Through mise (recommended)
@@ -37,12 +37,12 @@ scan.
 straight from the GitHub release and keeps it updated:
 
 ```bash
-mise use -g github:Claquetteuuuh/sasteuuuh@0.1.0   # a pinned version
-mise use -g github:Claquetteuuuh/sasteuuuh         # the newest release that is 24 h old
-sasteuuuh --version
+mise use -g github:Claquetteuuuh/sast3uh@0.1.0   # a pinned version
+mise use -g github:Claquetteuuuh/sast3uh         # the newest release that is 24 h old
+sast3uh --version
 ```
 
-`sasteuuuh` is on your `PATH` only when mise is activated in your shell —
+`sast3uh` is on your `PATH` only when mise is activated in your shell —
 `mise doctor` must say `activated: yes` (or `shims_on_path: yes`). If it
 does not, add mise's hook to your shell once and open a new terminal:
 
@@ -50,13 +50,13 @@ does not, add mise's hook to your shell once and open a new terminal:
 echo 'eval "$(mise activate zsh)"' >> ~/.zshrc     # bash: mise activate bash >> ~/.bashrc
 ```
 
-Until then, `mise exec -- sasteuuuh --version` runs the installed binary.
+Until then, `mise exec -- sast3uh --version` runs the installed binary.
 
 mise hides a release younger than its `minimum_release_age` (24 h by
 default) from `@latest`: the day a version comes out, `mise use` without a
 version answers "no versions found … eligible tomorrow". That is the same
 cooldown this project's Dependabot applies to its own dependencies — keep
-it, and pin the version instead. sasteuuuh itself always installs scanners
+it, and pin the version instead. sast3uh itself always installs scanners
 with an explicit version (`mise use -g <tool>@<version>`), so it is never
 held back by it.
 
@@ -64,33 +64,33 @@ held back by it.
 
 Every release ships, for `x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin`, the bare executable
-`sasteuuuh-<version>-<target>` (download, `chmod +x`, run) and an archive
-`sasteuuuh-<version>-<target>.tar.gz` with README and SECURITY.md — each with
+`sast3uh-<version>-<target>` (download, `chmod +x`, run) and an archive
+`sast3uh-<version>-<target>.tar.gz` with README and SECURITY.md — each with
 a `.sha256`, all listed in `checksums.txt`, and each carrying a
 build-provenance attestation signed by the release workflow. (v0.1.0 shipped
 the archives only.)
 
 ```bash
 V=0.1.0; T=x86_64-unknown-linux-gnu   # pick your target
-gh release download "v$V" --repo Claquetteuuuh/sasteuuuh \
-  --pattern "sasteuuuh-$V-$T.tar.gz" --pattern checksums.txt
+gh release download "v$V" --repo Claquetteuuuh/sast3uh \
+  --pattern "sast3uh-$V-$T.tar.gz" --pattern checksums.txt
 sha256sum --ignore-missing -c checksums.txt                 # integrity
-gh attestation verify "sasteuuuh-$V-$T.tar.gz" --repo Claquetteuuuh/sasteuuuh  # provenance
-tar -xzf "sasteuuuh-$V-$T.tar.gz"
-install -m 0755 "sasteuuuh-$V-$T/sasteuuuh" ~/.local/bin/   # anywhere on your PATH
+gh attestation verify "sast3uh-$V-$T.tar.gz" --repo Claquetteuuuh/sast3uh  # provenance
+tar -xzf "sast3uh-$V-$T.tar.gz"
+install -m 0755 "sast3uh-$V-$T/sast3uh" ~/.local/bin/   # anywhere on your PATH
 ```
 
 Or the bare executable, same checks:
 
 ```bash
-gh release download "v$V" --repo Claquetteuuuh/sasteuuuh --pattern "sasteuuuh-$V-$T" --pattern checksums.txt
+gh release download "v$V" --repo Claquetteuuuh/sast3uh --pattern "sast3uh-$V-$T" --pattern checksums.txt
 sha256sum --ignore-missing -c checksums.txt
-gh attestation verify "sasteuuuh-$V-$T" --repo Claquetteuuuh/sasteuuuh
-install -m 0755 "sasteuuuh-$V-$T" ~/.local/bin/sasteuuuh
+gh attestation verify "sast3uh-$V-$T" --repo Claquetteuuuh/sast3uh
+install -m 0755 "sast3uh-$V-$T" ~/.local/bin/sast3uh
 ```
 
 Without the `gh` CLI, the same files are on the
-[releases page](https://github.com/Claquetteuuuh/sasteuuuh/releases).
+[releases page](https://github.com/Claquetteuuuh/sast3uh/releases).
 
 ### 3. From source
 
@@ -99,11 +99,11 @@ you build inside the clone). The crate is not on crates.io on purpose.
 
 ```bash
 # straight from the tag, into ~/.cargo/bin
-cargo install --locked --git https://github.com/Claquetteuuuh/sasteuuuh --tag v0.1.0
+cargo install --locked --git https://github.com/Claquetteuuuh/sast3uh --tag v0.1.0
 
 # or from a clone
-git clone https://github.com/Claquetteuuuh/sasteuuuh && cd sasteuuuh
-cargo build --release --locked        # → target/release/sasteuuuh
+git clone https://github.com/Claquetteuuuh/sast3uh && cd sast3uh
+cargo build --release --locked        # → target/release/sast3uh
 cargo test --all-features --locked    # 175 tests, no scanner needed
 ```
 
@@ -113,14 +113,14 @@ built.
 
 ### Installing the scanners
 
-sasteuuuh drives the scanners it finds; it never bundles them. With mise on
+sast3uh drives the scanners it finds; it never bundles them. With mise on
 your `PATH`, a scan offers to install a missing one and to update an
 outdated one (`--update ask`, the default; `--update always` to say yes to
 everything, `--offline` for no lookup at all). To install them yourself:
 
 ```bash
 mise use -g semgrep aqua:Bearer/bearer trivy ubi:lunarmodules/luacheck
-sasteuuuh tools      # installed path, version and latest release of each
+sast3uh tools      # installed path, version and latest release of each
 ```
 
 Each scanner is resolved with `mise which` first, then on `PATH`, so a
@@ -128,7 +128,7 @@ mise-managed version always wins over a stray system one.
 
 ## Rule packs: exhaustive by default
 
-Semgrep is only as good as the rules it is given. sasteuuuh looks at what the
+Semgrep is only as good as the rules it is given. sast3uh looks at what the
 target holds (languages from file names, notable files such as workflows,
 lockfiles, compose or Kubernetes manifests) and passes Semgrep every official
 registry pack that applies, from a catalogue measured against the registry:
@@ -148,7 +148,7 @@ finding.
   the audit-oriented, community and correctness ones.
 - `--semgrep-profile security`: the security packs only — fewer findings.
 - `--semgrep-config <CONFIG>` (repeatable): your own list, no selection.
-- `sasteuuuh packs [DIR]`: what the selection would be, and why.
+- `sast3uh packs [DIR]`: what the selection would be, and why.
 
 Bearer runs both of its engines (`--scanner sast,secrets`); Trivy runs all
 four of its scanners (`vuln,misconfig,secret,license`), dev dependencies
@@ -171,9 +171,9 @@ that keeps both tools' details.
 ## Usage
 
 ```text
-sasteuuuh scan [DIR] [options]      # run every available scanner
-sasteuuuh tools [--offline]         # installed / latest version of each scanner
-sasteuuuh packs [DIR]               # languages found and Semgrep packs selected
+sast3uh scan [DIR] [options]      # run every available scanner
+sast3uh tools [--offline]         # installed / latest version of each scanner
+sast3uh packs [DIR]               # languages found and Semgrep packs selected
 
   -f, --format <text|json|yaml|xml|html>   guessed from --output's extension
   -o, --output <FILE>                      atomic write; stdout otherwise

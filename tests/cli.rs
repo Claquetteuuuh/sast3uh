@@ -12,7 +12,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn bin() -> Command {
-    Command::cargo_bin("sasteuuuh").expect("binary built by cargo")
+    Command::cargo_bin("sast3uh").expect("binary built by cargo")
 }
 
 fn fixtures() -> PathBuf {
