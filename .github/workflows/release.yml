@@ -68,6 +68,9 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: cargo build --release --locked --target "$TARGET"
 
+      # Two shapes of the same build: the bare executable, to download and run as
+      # is, and an archive with README and SECURITY.md. Both get a SHA-256 file and
+      # a provenance attestation.
       - name: Package
         env:
           TAG: ${{ github.ref_name }}
@@ -79,13 +82,16 @@ jobs:
           cp "target/${TARGET}/release/sasteuuuh" README.md SECURITY.md "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           rm -r "dist/${name}"
-          (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
-          cat "dist/${name}.tar.gz.sha256"
+          install -m 0755 "target/${TARGET}/release/sasteuuuh" "dist/${name}"
+          (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256" && shasum -a 256 "${name}" > "${name}.sha256")
+          cat dist/*.sha256
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*.tar.gz
+          subject-path: |
+            dist/*.tar.gz
+            dist/sasteuuuh-*-${{ matrix.target }}
 
       - name: Upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -117,7 +123,13 @@ jobs:
       - name: Checksums
         run: |
           set -euo pipefail
-          (cd dist && shasum -a 256 ./*.tar.gz > checksums.txt && cat checksums.txt)
+          cd dist
+          : > checksums.txt
+          for f in sasteuuuh-*; do
+            case "$f" in *.sha256) continue ;; esac
+            shasum -a 256 "$f" >> checksums.txt
+          done
+          cat checksums.txt
 
       - name: Create the release
         env:
@@ -125,4 +137,4 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes dist/*.tar.gz dist/*.sha256 dist/checksums.txt
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes dist/*
