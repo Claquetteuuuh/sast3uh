@@ -1,0 +1,1 @@
+ERROR: CodeQL detected code written in JavaScript/TypeScript, but not any written in Ruby. Confirm that there is some source code for Ruby in the project. For more information, review our troubleshooting guide at https://gh.io/troubleshooting-code-scanning/no-source-code-seen-during-build.

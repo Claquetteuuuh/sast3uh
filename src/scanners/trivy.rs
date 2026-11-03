@@ -55,13 +55,15 @@ impl Scanner for Trivy {
             "--include-dev-deps",
             "--format",
             "json",
-            "--quiet",
-            "--no-progress",
             "--skip-version-check",
             // Findings are a result, not an error: the exit code must say "ran".
             "--exit-code",
             "0",
         ]);
+        if !options.live {
+            // On a terminal Trivy's progress on standard error is the progress.
+            args.extend(os_args(&["--quiet", "--no-progress"]));
+        }
         if options.semgrep_profile == Profile::Exhaustive {
             // More detections at the cost of precision, and licenses read from file
             // headers, not only from package metadata.
@@ -962,6 +964,19 @@ mod tests {
         assert!(args.contains(&"--license-full".to_owned()));
         assert!(!args.contains(&"--skip-db-update".to_owned()));
         assert_eq!(args.last().map(String::as_str), Some("."));
+        assert!(args.contains(&"--quiet".to_owned()));
+        assert!(args.contains(&"--no-progress".to_owned()));
+        let live = ScanOptions {
+            live: true,
+            ..ScanOptions::default()
+        };
+        let live_args = Trivy.scan_args(&live);
+        assert!(
+            !live_args
+                .iter()
+                .any(|a| a == "--quiet" || a == "--no-progress")
+        );
+        assert_eq!(live_args.last().unwrap(), ".");
         assert!(Trivy.plan(&exhaustive).unwrap().contains("comprehensive"));
 
         let security_offline = ScanOptions {

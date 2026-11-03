@@ -48,13 +48,11 @@ impl Scanner for Semgrep {
     }
 
     fn scan_args(&self, options: &ScanOptions) -> Vec<OsString> {
-        let mut args = os_args(&[
-            "scan",
-            "--json",
-            "--quiet",
-            "--metrics=off",
-            "--disable-version-check",
-        ]);
+        let mut args = os_args(&["scan", "--json", "--metrics=off", "--disable-version-check"]);
+        if !options.live {
+            // On a terminal Semgrep's own status lines on standard error are the progress.
+            args.push("--quiet".into());
+        }
         for config in options.semgrep_configs() {
             args.push("--config".into());
             args.push(config.into());
@@ -200,14 +198,25 @@ struct Metadata {
 struct RawError {
     #[serde(default, deserialize_with = "null_default")]
     level: String,
-    #[serde(default, rename = "type", deserialize_with = "null_default")]
-    kind: String,
+    /// A plain string (`"Internal matching error"`) or a variant with a payload
+    /// (`["PartialParsing", [locations]]`, `["IncompatibleRule", {…}]`,
+    /// `["PatternParseError", ["…"]]`), as Semgrep's `error_type` serialises.
+    #[serde(default, rename = "type")]
+    kind: Value,
     #[serde(default, deserialize_with = "null_default")]
     message: String,
     #[serde(default)]
-    rule_id: Option<String>,
+    rule_id: Strings,
     #[serde(default)]
-    path: Option<String>,
+    path: Strings,
+    #[serde(default)]
+    short_msg: Option<String>,
+    #[serde(default)]
+    long_msg: Option<String>,
+    #[serde(default)]
+    help: Option<String>,
+    #[serde(default)]
+    spans: Option<Value>,
 }
 
 /// Parse `semgrep --json` output.
@@ -243,7 +252,7 @@ pub fn parse(bytes: &[u8]) -> Result<Parsed, ParseError> {
     }
     for value in root.errors {
         match serde_json::from_value::<RawError>(value) {
-            Ok(err) => parsed.diagnostics.push(to_diagnostic(err)),
+            Ok(err) => parsed.diagnostics.push(to_diagnostic(&err)),
             Err(err) => parsed
                 .warnings
                 .push(format!("unreadable error entry: {err}")),
@@ -334,21 +343,86 @@ fn to_finding(raw: RawResult, path: PathBuf) -> Finding {
     f
 }
 
-fn to_diagnostic(err: RawError) -> Diagnostic {
-    let first_line = err.message.lines().next().unwrap_or_default().trim();
-    let message = if err.kind.trim().is_empty() {
-        tail(first_line, 300)
-    } else {
-        format!("{}: {}", err.kind.trim(), tail(first_line, 300))
+/// The name of an `error_type`: the string itself, or the variant name of a payload-carrying
+/// one with a word on its payload (`PartialParsing (3 locations)`, `IncompatibleRule (min
+/// 1.50.0)`).
+fn error_kind(kind: &Value) -> String {
+    match kind {
+        Value::String(s) => s.trim().to_owned(),
+        Value::Array(items) => {
+            let name = items
+                .first()
+                .and_then(Value::as_str)
+                .unwrap_or("error")
+                .to_owned();
+            let detail = match items.get(1) {
+                Some(Value::Array(payload)) => Some(format!("{} item(s)", payload.len())),
+                Some(Value::Object(fields)) => {
+                    let mut keys: Vec<String> = fields
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            v.as_str()
+                                .map(|v| format!("{k} {v}"))
+                                .or_else(|| v.as_u64().map(|n| format!("{k} {n}")))
+                        })
+                        .take(3)
+                        .collect();
+                    keys.sort();
+                    (!keys.is_empty()).then(|| keys.join(", "))
+                }
+                Some(Value::String(s)) => Some(s.clone()),
+                _ => None,
+            };
+            match detail {
+                Some(detail) => format!("{name} ({})", cap(&detail, 120)),
+                None => name,
+            }
+        }
+        Value::Null => String::new(),
+        other => cap(&other.to_string(), 80),
+    }
+}
+
+fn to_diagnostic(err: &RawError) -> Diagnostic {
+    use std::fmt::Write as _;
+    let first_line = |text: &str| text.lines().next().unwrap_or_default().trim().to_owned();
+    let kind = error_kind(&err.kind);
+    let text = {
+        let from_message = first_line(&err.message);
+        if from_message.is_empty() {
+            first_line(
+                err.short_msg
+                    .as_deref()
+                    .or(err.long_msg.as_deref())
+                    .unwrap_or_default(),
+            )
+        } else {
+            from_message
+        }
     };
+    let mut message = if kind.is_empty() {
+        tail(&text, 300)
+    } else {
+        format!("{kind}: {}", tail(&text, 300))
+    };
+    if let Some(help) = err.help.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+        let _ = write!(message, " — {}", cap(help, 200));
+    }
+    if let Some(Value::Array(spans)) = &err.spans
+        && !spans.is_empty()
+    {
+        let _ = write!(message, " [{} span(s)]", spans.len());
+    }
+    let rule_id = (!err.rule_id.0.is_empty()).then(|| err.rule_id.0.join(", "));
+    let path = (!err.path.0.is_empty()).then(|| err.path.0.join(", "));
     Diagnostic {
         level: if err.level.trim().is_empty() {
             "warn".to_owned()
         } else {
             err.level.trim().to_owned()
         },
-        rule_id: err.rule_id.filter(|r| !r.is_empty()),
-        path: err.path.filter(|p| !p.is_empty()),
+        rule_id,
+        path,
         message,
     }
 }
@@ -623,6 +697,54 @@ mod tests {
     }
 
     #[test]
+    fn structured_error_types_and_list_fields_are_read_not_dropped() {
+        // Semgrep 1.183 reported these as "unreadable error entry" before: the `type` is a
+        // variant with a payload, and `path` / `rule_id` can be lists.
+        let json = br#"{"results":[],"errors":[
+          {"code":3,"level":"warn","type":["PartialParsing",[{"path":"a.php","start":{"line":2,"col":1,"offset":7},"end":{"line":2,"col":9,"offset":15}},{"path":"a.php","start":{"line":9,"col":1,"offset":99},"end":{"line":9,"col":2,"offset":100}}]],"message":"Syntax error at line a.php:2:\n `{` was unexpected","path":"a.php"},
+          {"code":2,"level":"warn","type":["IncompatibleRule",{"rule_id":"x.y","this_version":"1.183.0","min_version":"1.200.0","max_version":null}],"message":"rule x.y needs a newer Semgrep","rule_id":["x.y","x.z"],"path":["a.php","b.php"]},
+          {"code":2,"level":"error","type":["PatternParseError",["pattern one","pattern two"]],"message":"","short_msg":"bad pattern","help":"fix the rule","spans":[{"file":"r.yml"}]},
+          {"code":2,"level":"warn","type":"Timeout","message":"rule took too long","rule_id":"slow.rule","path":"big.php"},
+          {"code":2,"level":null,"type":null,"message":null}
+        ]}"#;
+        let parsed = parse(json).unwrap();
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(parsed.diagnostics.len(), 5);
+        let d = &parsed.diagnostics;
+        assert_eq!(
+            d[0].message,
+            "PartialParsing (2 item(s)): Syntax error at line a.php:2:"
+        );
+        assert_eq!(d[0].path.as_deref(), Some("a.php"));
+        assert!(
+            d[1].message.starts_with("IncompatibleRule ("),
+            "{}",
+            d[1].message
+        );
+        assert!(
+            d[1].message.contains("min_version 1.200.0"),
+            "{}",
+            d[1].message
+        );
+        assert_eq!(d[1].rule_id.as_deref(), Some("x.y, x.z"));
+        assert_eq!(d[1].path.as_deref(), Some("a.php, b.php"));
+        assert_eq!(d[2].level, "error");
+        assert_eq!(
+            d[2].message,
+            "PatternParseError (2 item(s)): bad pattern — fix the rule [1 span(s)]"
+        );
+        assert_eq!(d[3].message, "Timeout: rule took too long");
+        assert_eq!(d[3].rule_id.as_deref(), Some("slow.rule"));
+        assert_eq!(d[4].level, "warn");
+        assert_eq!(d[4].message, "");
+        assert_eq!(
+            error_kind(&serde_json::json!(["MissingPlugin", "pro"])),
+            "MissingPlugin (pro)"
+        );
+        assert_eq!(error_kind(&serde_json::json!(42)), "42");
+    }
+
+    #[test]
     fn maps_every_severity_level() {
         assert_eq!(severity("CRITICAL"), Severity::Critical);
         assert_eq!(severity("ERROR"), Severity::High);
@@ -750,6 +872,12 @@ mod tests {
         assert!(args.contains(&"--metrics=off".to_owned()));
         assert_eq!(args.iter().filter(|a| *a == "--config").count(), 2);
         assert_eq!(args.last().map(String::as_str), Some("."));
+        assert!(args.contains(&"--quiet".to_owned()));
+        let live = ScanOptions {
+            live: true,
+            ..ScanOptions::default()
+        };
+        assert!(!Semgrep.scan_args(&live).iter().any(|a| a == "--quiet"));
         assert!(
             Semgrep
                 .plan(&options)

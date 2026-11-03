@@ -1,0 +1,1568 @@
+{
+  "projectPath": "example-org/insecure-ci",
+  "projectId": 0,
+  "defaultBranch": "",
+  "ciConfigSource": "local",
+  "ciValid": true,
+  "ciMissing": false,
+  "pipelineOriginMetrics": {
+    "jobTotal": 4,
+    "originAction": 1,
+    "originActionNested": 0,
+    "originActionTrustedExempt": 6,
+    "originActionUnpinned": 1,
+    "originReusableWorkflow": 0,
+    "originReusableWorkflowSecretsInherit": 0,
+    "originTotal": 1,
+    "unexpandedActions": 0,
+    "workflowsTotal": 2
+  },
+  "pipelineImageMetrics": {
+    "total": 1
+  },
+  "minPoints": 0,
+  "passed": true,
+  "actionPinningResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustBePinnedByCommitSha",
+    "immutableReleaseRefs": [],
+    "issues": [
+      {
+        "code": "ISSUE-701",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
+        "fingerprint": "9ad9609e2da85058",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-701"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/release"
+            },
+            {
+              "key": "uses",
+              "value": "softprops/action-gh-release@v1"
+            },
+            {
+              "key": "step",
+              "value": "Release"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/release",
+        "step": "Release",
+        "title": "Third-party action reference is not pinned by commit SHA",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:53",
+        "uses": "softprops/action-gh-release@v1"
+      }
+    ],
+    "metrics": {
+      "actionRefsExempt": 6,
+      "actionRefsImmutableRelease": 0,
+      "actionRefsTotal": 1,
+      "actionRefsUnpinned": 1
+    },
+    "name": "Third-party actions must be pinned by commit SHA",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "archivedActionsResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustNotBeArchived",
+    "issues": [],
+    "metrics": {
+      "actionRefsArchived": 0,
+      "actionRefsTotal": 1
+    },
+    "name": "Actions must not reference archived repositories",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "authorizedActionSourcesResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "githubActionMustComeFromAuthorizedSources",
+    "issues": [
+      {
+        "code": "ISSUE-713",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-713",
+        "fingerprint": "6bb97ffd5f7cd8a5",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-713"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/release"
+            },
+            {
+              "key": "uses",
+              "value": "softprops/action-gh-release@v1"
+            },
+            {
+              "key": "step",
+              "value": "Release"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/release",
+        "occurrenceSeverity": "high",
+        "pinnedBySha": false,
+        "step": "Release",
+        "title": "Action comes from an unauthorized source",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:53",
+        "uses": "softprops/action-gh-release@v1"
+      }
+    ],
+    "metrics": {
+      "actionRefsTotal": 7,
+      "actionRefsUnauthorized": 1
+    },
+    "name": "Actions must come from authorized sources",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "branchProtectionResult": {
+    "category": "Access and Authorization",
+    "controlName": "branchMustBeProtected",
+    "data": [],
+    "enabled": true,
+    "metrics": {
+      "branches": 0,
+      "branchesToProtect": 0,
+      "nonCompliantBranches": 0,
+      "projectsCorrectlyProtected": 0,
+      "totalProtectedBranches": 0,
+      "unprotectedBranches": 0
+    },
+    "name": "Branch must be protected",
+    "status": "error",
+    "version": "0.2.0"
+  },
+  "cachePoisoningResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "untrustedTriggersMustNotWriteCache",
+    "issues": [],
+    "metrics": {
+      "exemptedJobs": 0,
+      "untrustedCacheWriteFound": 0,
+      "workflowsScanned": 2
+    },
+    "name": "Untrusted triggers must not write the cache",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "checkoutCredentialsResult": {
+    "category": "CI/CD Secrets",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "checkoutMustNotPersistCredentials",
+    "issues": [
+      {
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "c5a7c326e699cabb",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": "Checkout"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "step": "Checkout",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:15",
+        "uses": "actions/checkout@v4"
+      },
+      {
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "aed7af291ddab321",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/docker"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v2"
+            },
+            {
+              "key": "step",
+              "value": "Checkout"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/docker",
+        "step": "Checkout",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:43",
+        "uses": "actions/checkout@v2"
+      },
+      {
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "b955f37afb1d111b",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/release"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": "Checkout"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/release",
+        "step": "Checkout",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:51",
+        "uses": "actions/checkout@v4"
+      },
+      {
+        "code": "ISSUE-307",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+        "fingerprint": "dec6c5aee96e6de5",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-307"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/reusable.yml"
+            },
+            {
+              "key": "job",
+              "value": "reusable/deploy"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": ""
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "reusable/deploy",
+        "title": "Checkout persists credentials in .git/config (latent)",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/reusable.yml:9",
+        "uses": "actions/checkout@v4"
+      }
+    ],
+    "metrics": {
+      "checkoutsPackedIntoArtifact": 0,
+      "checkoutsPersistingLatent": 4,
+      "workflowsScanned": 2
+    },
+    "name": "Checkout must not persist credentials",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "dangerousTriggersResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotUseDangerousTriggers",
+    "issues": [
+      {
+        "code": "ISSUE-802",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-802",
+        "fingerprint": "c61ce23628e985b1",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-802"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "step": "Checkout",
+        "title": "Dangerous workflow trigger",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:15"
+      }
+    ],
+    "metrics": {
+      "workflowsScanned": 2,
+      "workflowsWithDangerousTrigger": 1
+    },
+    "name": "Workflows must not use dangerous triggers",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "debugTraceResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotEnableDebugTrace",
+    "issues": [
+      {
+        "code": "ISSUE-203",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-203",
+        "fingerprint": "d0eea11f4d6a3a8b",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-203"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "variableName",
+              "value": "ACTIONS_STEP_DEBUG"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "location": "ci/build",
+        "title": "Pipeline enables CI debug trace",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:26",
+        "value": "true",
+        "valueProvenance": "ci_file",
+        "variableName": "ACTIONS_STEP_DEBUG"
+      }
+    ],
+    "metrics": {
+      "forbiddenFound": 1,
+      "totalVariablesChecked": 4
+    },
+    "name": "Pipeline must not enable debug trace",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "dockerInDockerResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotUseDockerInDocker",
+    "issues": [],
+    "metrics": {
+      "dindServicesFound": 0,
+      "insecureDaemonFound": 0,
+      "totalJobsChecked": 4
+    },
+    "name": "Pipeline must not use Docker-in-Docker",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "excessivePermissionsResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotGrantPermissionsWriteAll",
+    "issues": [
+      {
+        "code": "ISSUE-803",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-803",
+        "fingerprint": "0dc99fed14bc80eb",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-803"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "title": "Excessive workflow permissions",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:12"
+      }
+    ],
+    "metrics": {
+      "jobsTotal": 4,
+      "jobsWithWriteAll": 1
+    },
+    "name": "Workflow must not grant write-all permissions",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "githubEnvInjectionResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotWriteUntrustedContentToGitHubEnv",
+    "issues": [],
+    "metrics": {
+      "githubEnvInjectionsFound": 0,
+      "scriptLinesChecked": 6,
+      "workflowsScanned": 2
+    },
+    "name": "Workflows must not write untrusted content to $GITHUB_ENV",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "imageForbiddenTagsResult": {
+    "category": "CI/CD Container Images",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "containerImageMustNotUseForbiddenTags",
+    "issues": [
+      {
+        "code": "ISSUE-102",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-102",
+        "fingerprint": "aad066e4dadf2772",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-102"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/docker"
+            },
+            {
+              "key": "link",
+              "value": "node:latest"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/docker",
+        "link": "node:latest",
+        "tag": "latest",
+        "title": "Forbidden container image tag",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:40"
+      },
+      {
+        "code": "ISSUE-103",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-103",
+        "fingerprint": "811e7d7b4ec89531",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-103"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/docker"
+            },
+            {
+              "key": "imageRepo",
+              "value": "node"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "imageRepo": "node",
+        "job": "ci/docker",
+        "link": "node:latest",
+        "tag": "latest",
+        "title": "Container image is not pinned by digest",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:40"
+      }
+    ],
+    "metrics": {
+      "ciInvalid": 0,
+      "ciMissing": 0,
+      "notPinnedByDigest": 1,
+      "pinnedByDigest": 0,
+      "total": 1,
+      "usingForbiddenTags": 1
+    },
+    "mustBePinnedByDigest": true,
+    "name": "Container images must not use forbidden reference",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.4.0"
+  },
+  "impostorCommitResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionRefsMustExistUpstream",
+    "issues": [],
+    "metrics": {
+      "actionRefsAbsentUpstream": 0,
+      "actionRefsTotal": 1
+    },
+    "name": "Actions must pin commits that exist upstream",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "invalidWorkflowsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowsMustBeValid",
+    "issues": [],
+    "metrics": {
+      "workflowFilesInvalid": 0,
+      "workflowsTotal": 2
+    },
+    "name": "Workflow files must be valid",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "knownVulnerableActionsResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustNotCarryKnownCVEs",
+    "issues": [],
+    "metrics": {
+      "actionRefsTotal": 1,
+      "actionRefsVulnerable": 0
+    },
+    "name": "Actions must not carry known CVEs",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "mutableRemoteExecResult": {
+    "category": "Third-party Actions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "actionsMustNotExecuteMutableRemoteCode",
+    "issues": [],
+    "metrics": {
+      "actionRefsTotal": 1,
+      "actionsWithMutableRemoteExec": 0
+    },
+    "name": "Actions must not execute mutable remote code",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "overprovisionedSecretsResult": {
+    "category": "CI/CD Secrets",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotExportEntireSecretsContext",
+    "issues": [],
+    "metrics": {
+      "secretsContextExportsFound": 0,
+      "workflowsScanned": 2
+    },
+    "name": "Workflows must not expose all secrets at once",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "permissionsResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowsMustDeclarePermissions",
+    "issues": [
+      {
+        "code": "ISSUE-801",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-801",
+        "fingerprint": "c7ee7f130a3e90df",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-801"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/docker"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/docker",
+        "title": "Workflow has no explicit `permissions:` block",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:37"
+      },
+      {
+        "code": "ISSUE-801",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-801",
+        "fingerprint": "42a345b944b47ebe",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-801"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/release"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/release",
+        "title": "Workflow has no explicit `permissions:` block",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:46"
+      },
+      {
+        "code": "ISSUE-801",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-801",
+        "fingerprint": "60eb6d483a66a351",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-801"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/reusable.yml"
+            },
+            {
+              "key": "job",
+              "value": "reusable/deploy"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "reusable/deploy",
+        "title": "Workflow has no explicit `permissions:` block",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/reusable.yml:6"
+      }
+    ],
+    "metrics": {
+      "workflowsMissingPermissions": 1,
+      "workflowsTotal": 2
+    },
+    "name": "Workflows must declare permissions",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "pullRequestTargetHeadCheckoutResult": {
+    "category": "Workflow Triggers and Permissions",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pullRequestTargetMustNotCheckoutHead",
+    "issues": [
+      {
+        "code": "ISSUE-804",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-804",
+        "fingerprint": "2f0982803c7bca82",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-804"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "uses",
+              "value": "actions/checkout@v4"
+            },
+            {
+              "key": "step",
+              "value": "Checkout"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "ref": "${{ github.event.pull_request.head.sha }}",
+        "step": "Checkout",
+        "title": "pull_request_target workflow explicitly checks out the PR head",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:15",
+        "uses": "actions/checkout@v4"
+      }
+    ],
+    "metrics": {
+      "headCheckoutsUnderPrTarget": 1,
+      "workflowsScanned": 2
+    },
+    "name": "pull_request_target workflows must not check out the PR head",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "refConfusionResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "externalRefsMustNotCollide",
+    "issues": [],
+    "metrics": {
+      "actionRefsAmbiguous": 0,
+      "actionRefsTotal": 1
+    },
+    "name": "Includes must not use ambiguous tag/branch refs",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "requiredActionsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustIncludeRequiredActions",
+    "issues": [],
+    "metrics": {
+      "anySatisfiedGroup": false,
+      "satisfiedGroups": 0,
+      "totalGroups": 0
+    },
+    "name": "Workflows must include required actions",
+    "requirementGroups": [],
+    "skipped": true,
+    "status": "skipped",
+    "version": "0.1.0"
+  },
+  "reusableSecretsResult": {
+    "category": "CI/CD Secrets",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "reusableWorkflowsMustNotInheritSecrets",
+    "issues": [],
+    "metrics": {
+      "reusableCalls": 0,
+      "reusableCallsSecretsInherit": 0
+    },
+    "name": "Reusable workflows must not inherit secrets",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "securityJobsWeakenedResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "securityJobsMustNotBeWeakened",
+    "issues": [],
+    "metrics": {
+      "securityJobsFound": 0,
+      "weakenedJobs": 0
+    },
+    "name": "Security jobs must not be weakened",
+    "skipped": false,
+    "status": "passed",
+    "version": "0.1.0"
+  },
+  "templateInjectionResult": {
+    "category": "CI/CD Variables",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "workflowMustNotInjectUserInputInScripts",
+    "issues": [
+      {
+        "code": "ISSUE-207",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-207",
+        "fingerprint": "2ec94246c07871cd",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-207"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "title": "Template injection in workflow script",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:21"
+      }
+    ],
+    "metrics": {
+      "scriptLinesChecked": 6,
+      "templateInjectionsFound": 1,
+      "workflowsScanned": 2
+    },
+    "name": "Workflows must not inject user input in scripts",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "unverifiedScriptsResult": {
+    "category": "Pipeline Composition",
+    "ciMissing": false,
+    "ciValid": true,
+    "controlName": "pipelineMustNotExecuteUnverifiedScripts",
+    "issues": [
+      {
+        "code": "ISSUE-411",
+        "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-411",
+        "fingerprint": "c316e34ef5cb576d",
+        "identity": {
+          "fields": [
+            {
+              "key": "code",
+              "value": "ISSUE-411"
+            },
+            {
+              "key": "file",
+              "value": ".github/workflows/ci.yml"
+            },
+            {
+              "key": "job",
+              "value": "ci/build"
+            },
+            {
+              "key": "scriptLine",
+              "value": "curl -sSL https://example.com/install.sh | bash"
+            }
+          ],
+          "subjectFromMessage": false,
+          "version": 8
+        },
+        "job": "ci/build",
+        "scriptLine": "curl -sSL https://example.com/install.sh | bash",
+        "title": "Unverified script execution",
+        "url": "/tmp/claude-1000/-home-claquetteuuuh-apps-sasteuuuh/0b36e308-1e42-431d-a5fb-6fa04bd8c663/scratchpad/insecure-ci/.github/workflows/ci.yml:23"
+      }
+    ],
+    "metrics": {
+      "jobsChecked": 4,
+      "totalScriptLinesChecked": 6,
+      "unverifiedScriptsFound": 1
+    },
+    "name": "Pipeline must not execute unverified scripts",
+    "skipped": false,
+    "status": "failed",
+    "version": "0.1.0"
+  },
+  "analyzedCiConfig": {
+    "workflows": [
+      {
+        "content": "name: CI\non:\n  pull_request_target:\n    types: [opened, synchronize]\n  issue_comment:\n    types: [created]\n  push:\n    branches: [main]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    permissions: write-all\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n      - name: Node\n        uses: actions/setup-node@main\n      - name: Greet\n        run: 'echo \"Title: ${{ github.event.issue.title }}\"'\n      - name: Install tooling\n        run: curl -sSL https://example.com/install.sh | bash\n      - name: Build\n        env:\n          ACTIONS_STEP_DEBUG: true\n          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}\n          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}\n        run: npm ci \u0026\u0026 npm run build\n      - name: Cache\n        uses: actions/cache@v3\n        with:\n          path: node_modules\n          key: deps-${{ hashFiles('package-lock.json') }}\n      - name: Env\n        run: echo \"PATH=/tmp/evil:$PATH\" \u003e\u003e \"$GITHUB_ENV\"\n  docker:\n    runs-on: ubuntu-latest\n    container:\n      image: node:latest\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v2\n      - name: Privileged\n        run: docker run --privileged -v /var/run/docker.sock:/var/run/docker.sock alpine:latest sh -c \"echo hi\"\n  release:\n    runs-on: ubuntu-latest\n    needs: build\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n      - name: Release\n        uses: softprops/action-gh-release@v1\n        with:\n          files: dist/*\n",
+        "path": ".github/workflows/ci.yml"
+      },
+      {
+        "content": "name: Reusable\non:\n  workflow_call:\n    secrets: inherit\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: ./deploy.sh\n        env:\n          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}\n",
+        "path": ".github/workflows/reusable.yml"
+      }
+    ]
+  },
+  "dataCollectionDegraded": true,
+  "degradedReasons": [
+    "branch protection could not be fetched; branch controls were not evaluated"
+  ],
+  "headCommitSha": "3ba44fd69d4b5cc31887146f6e075f9e1e366c39",
+  "plumberConfig": {
+    "effectivePolicy": {
+      "github": {
+        "controls": {
+          "actionRefsMustExistUpstream": {
+            "enabled": true
+          },
+          "actionsMustBePinnedByCommitSha": {
+            "enabled": true,
+            "trustedOwners": [
+              "actions",
+              "github",
+              "dependabot"
+            ]
+          },
+          "actionsMustNotBeArchived": {
+            "enabled": true
+          },
+          "actionsMustNotCarryKnownCVEs": {
+            "enabled": true
+          },
+          "actionsMustNotExecuteMutableRemoteCode": {
+            "enabled": true
+          },
+          "branchMustBeProtected": {
+            "allowForcePush": false,
+            "codeOwnerApprovalRequired": false,
+            "defaultMustBeProtected": true,
+            "enabled": true,
+            "namePatterns": [
+              "main",
+              "master",
+              "release/*",
+              "production",
+              "dev"
+            ]
+          },
+          "checkoutMustNotPersistCredentials": {
+            "enabled": true
+          },
+          "containerImageMustNotUseForbiddenTags": {
+            "containerImagesMustBePinnedByDigest": true,
+            "enabled": true,
+            "tags": [
+              "latest",
+              "dev",
+              "development",
+              "staging",
+              "main",
+              "master"
+            ]
+          },
+          "externalRefsMustNotCollide": {
+            "enabled": true
+          },
+          "githubActionMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "minimumStars": 20000,
+            "trustGithubOfficialActions": true,
+            "trustSameOrgActions": true,
+            "trustedGithubActions": [
+              "aws-actions/*",
+              "google-github-actions/*",
+              "googleapis/*",
+              "Azure/*",
+              "cloudflare/*",
+              "hashicorp/*",
+              "pulumi/*",
+              "digitalocean/*",
+              "ibm/*",
+              "oracle-actions/*",
+              "canonical/*",
+              "fastly/*",
+              "docker/*",
+              "gradle/*",
+              "goreleaser/*",
+              "bazel-contrib/*",
+              "jfrog/*",
+              "jfrog-fastci/*",
+              "dagger/*",
+              "buildkite/*",
+              "CircleCI-Public/*",
+              "earthly/*",
+              "pypa/*",
+              "ruby/*",
+              "denoland/*",
+              "oven-sh/*",
+              "astral-sh/*",
+              "golangci/*",
+              "dart-lang/*",
+              "erlef/*",
+              "haskell-actions/*",
+              "julia-actions/*",
+              "ocaml/*",
+              "conda-incubator/*",
+              "r-lib/*",
+              "sbt/*",
+              "VirtusLab/*",
+              "gleam-lang/*",
+              "getplumber/*",
+              "step-security/*",
+              "ossf/*",
+              "sigstore/*",
+              "slsa-framework/*",
+              "aquasecurity/*",
+              "anchore/*",
+              "snyk/*",
+              "SonarSource/*",
+              "trufflesecurity/*",
+              "gitleaks/*",
+              "chainguard-dev/*",
+              "GitGuardian/*",
+              "bridgecrewio/*",
+              "zaproxy/*",
+              "Checkmarx/*",
+              "veracode/*",
+              "tenable/*",
+              "semgrep/*",
+              "in-toto/*",
+              "sonatype/*",
+              "sonatype-nexus-community/*",
+              "checkmarx-ts/*",
+              "Qualys/*",
+              "orcasecurity/*",
+              "oxsecurity/*",
+              "codecov/*",
+              "getsentry/*",
+              "DataDog/*",
+              "cypress-io/*",
+              "CodSpeedHQ/*",
+              "codspeedhq/*",
+              "JetBrains/*",
+              "microsoft/*",
+              "atlassian/*",
+              "Shopify/*",
+              "netlify/*",
+              "planetscale/*",
+              "supabase/*",
+              "expo/*",
+              "grafana/*",
+              "honeycombio/*",
+              "newrelic/*",
+              "saucelabs/*",
+              "mongodb/*",
+              "adobe/*",
+              "facebook/*",
+              "helm/*",
+              "kubernetes-sigs/*",
+              "opentofu/*",
+              "ansible/*",
+              "ansible-community/*",
+              "pnpm/*",
+              "anthropics/*",
+              "openai/*",
+              "slackapi/*",
+              "google/*",
+              "golang/*",
+              "dependabot/*",
+              "rubygems/*",
+              "apple-actions/*",
+              "redhat-actions/*",
+              "graalvm/*",
+              "arduino/*",
+              "msys2/*",
+              "android-actions/*",
+              "changesets/*",
+              "tauri-apps/*",
+              "biomejs/*",
+              "bufbuild/*",
+              "reviewdog/*",
+              "hadolint/*",
+              "gittools/*",
+              "fsfe/*",
+              "cachix/*",
+              "nix-community/*",
+              "DeterminateSystems/*",
+              "1Password/*",
+              "tailscale/*",
+              "octokit/*",
+              "NuGet/*",
+              "depot/*",
+              "chromaui/*",
+              "signpath/*",
+              "rust-lang/*",
+              "apache/*",
+              "Homebrew/*",
+              "PyO3/*",
+              "EmbarkStudios/*",
+              "bytecodealliance/*",
+              "emscripten-core/*",
+              "devcontainers/*",
+              "renovatebot/*",
+              "prefix-dev/*",
+              "scientific-python/*",
+              "browserstack/*",
+              "digicert/*",
+              "zizmorcore/*",
+              "go-task/*",
+              "namespacelabs/*",
+              "voidzero-dev/*",
+              "crowdin/*",
+              "linear/*",
+              "qltysh/*",
+              "flatpak/*",
+              "peter-evans/*",
+              "azure/*",
+              "sonarsource/*",
+              "datadog/*",
+              "jetbrains/*",
+              "shopify/*",
+              "gitguardian/*",
+              "checkmarx/*",
+              "qualys/*",
+              "circleci-public/*",
+              "virtuslab/*",
+              "nuget/*",
+              "determinatesystems/*",
+              "1password/*",
+              "apple-Actions/*",
+              "embarkstudios/*",
+              "pyo3/*",
+              "homebrew/*"
+            ]
+          },
+          "pipelineMustNotEnableDebugTrace": {
+            "enabled": true,
+            "forbiddenVariables": [
+              "ACTIONS_STEP_DEBUG",
+              "ACTIONS_RUNNER_DEBUG"
+            ]
+          },
+          "pipelineMustNotExecuteUnverifiedScripts": {
+            "enabled": true,
+            "trustedUrls": []
+          },
+          "pipelineMustNotUseDockerInDocker": {
+            "detectInsecureDaemon": true,
+            "enabled": true
+          },
+          "pullRequestTargetMustNotCheckoutHead": {
+            "enabled": true
+          },
+          "reusableWorkflowsMustNotInheritSecrets": {
+            "enabled": true
+          },
+          "securityJobsMustNotBeWeakened": {
+            "allowFailureMustBeFalse": {
+              "enabled": true
+            },
+            "enabled": true,
+            "rulesMustNotBeRedefined": {
+              "enabled": true
+            },
+            "securityJobPatterns": [
+              "*codeql*",
+              "*dependency-review*",
+              "*trufflehog*",
+              "*gitleaks*",
+              "*osv-scanner*",
+              "*semgrep*",
+              "*trivy*",
+              "*snyk*",
+              "*-sast",
+              "*-sast-*",
+              "*-scan",
+              "*scan*",
+              "*-security",
+              "*-security-*",
+              "*-audit",
+              "*-audit-*",
+              "*secret*detect*",
+              "*detect*secret*"
+            ],
+            "whenMustNotBeManual": {
+              "enabled": true
+            }
+          },
+          "untrustedTriggersMustNotWriteCache": {
+            "enabled": true,
+            "exemptJobs": [],
+            "exemptWorkflows": []
+          },
+          "workflowMustIncludeRequiredActions": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "workflowMustNotExportEntireSecretsContext": {
+            "enabled": true
+          },
+          "workflowMustNotGrantPermissionsWriteAll": {
+            "enabled": true
+          },
+          "workflowMustNotInjectUserInputInScripts": {
+            "enabled": true
+          },
+          "workflowMustNotUseDangerousTriggers": {
+            "enabled": true
+          },
+          "workflowMustNotWriteUntrustedContentToGitHubEnv": {
+            "enabled": true
+          },
+          "workflowsMustBeValid": {
+            "enabled": true
+          },
+          "workflowsMustDeclarePermissions": {
+            "enabled": true
+          }
+        }
+      },
+      "gitlab": {
+        "controls": {
+          "branchMustBeProtected": {
+            "allowForcePush": false,
+            "codeOwnerApprovalRequired": false,
+            "defaultMustBeProtected": true,
+            "enabled": true,
+            "minMergeAccessLevel": 30,
+            "minPushAccessLevel": 40,
+            "namePatterns": [
+              "main",
+              "master",
+              "release/*",
+              "production",
+              "dev"
+            ]
+          },
+          "cicdVariablesMustBeMasked": {
+            "enabled": false
+          },
+          "cicdVariablesMustBeProtected": {
+            "enabled": false
+          },
+          "componentMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustGitlabOfficialComponents": true,
+            "trustSameGroupComponents": true,
+            "trustSameInstanceComponents": true,
+            "trustedComponents": [
+              "gitlab.com/getplumber/*"
+            ]
+          },
+          "containerImageMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustDockerHubOfficialImages": true,
+            "trustedUrls": [
+              "docker.io/library/*",
+              "docker.io/docker:*",
+              "docker.io/getplumber/plumber:*",
+              "docker.io/getplumber/plumber@sha256:*",
+              "getplumber/plumber:*",
+              "$CI_REGISTRY_IMAGE:*",
+              "$CI_REGISTRY_IMAGE/*",
+              "$CI_REGISTRY/*",
+              "${CI_REGISTRY}/*",
+              "${CI_REGISTRY_IMAGE}:*",
+              "${CI_REGISTRY_IMAGE}/*",
+              "${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/*",
+              "registry.gitlab.com/security-products/*",
+              "registry.gitlab.com/gitlab-org/*",
+              "registry.gitlab.com/pipeline-components/*",
+              "docker.io/node:*",
+              "docker.io/python:*",
+              "docker.io/golang:*",
+              "docker.io/rust:*",
+              "docker.io/alpine:*",
+              "docker.io/ubuntu:*",
+              "docker.io/debian:*",
+              "docker.io/curlimages/*",
+              "docker.io/alpine/*",
+              "docker.io/golangci/*",
+              "docker.io/koalaman/*",
+              "docker.io/hadolint/*",
+              "docker.io/semgrep/*",
+              "docker.io/sonarsource/*",
+              "docker.io/aquasec/*",
+              "docker.io/cypress/*",
+              "docker.io/gittools/*",
+              "docker.io/renovate/*",
+              "docker.io/gitlab/*",
+              "docker.io/lycheeverse/*",
+              "docker.io/hugomods/*",
+              "docker.io/fsfe/*",
+              "docker.io/hashicorp/*",
+              "docker.io/cimg/*",
+              "docker.io/circleci/*",
+              "docker.io/amazon/*",
+              "docker.io/google/*",
+              "docker.io/nvidia/*",
+              "docker.io/bitnami/*",
+              "docker.io/intel/*",
+              "docker.io/rocm/*",
+              "docker.io/redhat/*",
+              "docker.io/opensuse/*",
+              "docker.io/gentoo/*",
+              "docker.io/nixos/*",
+              "docker.io/rustlang/*",
+              "docker.io/amd64/*",
+              "docker.io/arm32v6/*",
+              "docker.io/arm32v7/*",
+              "docker.io/arm64v8/*",
+              "docker.io/i386/*",
+              "docker.io/ppc64le/*",
+              "docker.io/riscv64/*",
+              "docker.io/s390x/*",
+              "docker.io/continuumio/*",
+              "docker.io/oven/*",
+              "docker.io/snapcore/*",
+              "docker.io/bufbuild/*",
+              "docker.io/getsentry/*",
+              "docker.io/zricethezav/*",
+              "docker.io/pandoc/*",
+              "docker.io/bats/*",
+              "docker.io/davidanson/*",
+              "docker.io/jdkato/*",
+              "mcr.microsoft.com/*",
+              "quay.io/buildah/*",
+              "quay.io/podman/*",
+              "quay.io/containers/*",
+              "quay.io/centos/*",
+              "quay.io/pypa/*",
+              "quay.io/gnome_infrastructure/*",
+              "ghcr.io/astral-sh/*",
+              "ghcr.io/renovatebot/*",
+              "ghcr.io/containerbase/*",
+              "ghcr.io/canonical/*",
+              "ghcr.io/graalvm/*",
+              "ghcr.io/terraform-linters/*",
+              "ghcr.io/prefix-dev/*",
+              "ghcr.io/cirruslabs/*",
+              "ghcr.io/streetsidesoftware/*",
+              "ghcr.io/igorshubovych/*",
+              "ghcr.io/tcort/*",
+              "gcr.io/kaniko-project/*",
+              "gcr.io/go-containerregistry/*",
+              "gcr.io/google.com/cloudsdktool/*",
+              "gcr.io/oss-fuzz-base/*",
+              "nvcr.io/nvidia/*",
+              "registry.suse.com/*",
+              "registry.fedoraproject.org/*",
+              "registry.hub.docker.com/library/*",
+              "library/*",
+              "redhat/*",
+              "opensuse/*"
+            ]
+          },
+          "containerImageMustNotUseForbiddenTags": {
+            "containerImagesMustBePinnedByDigest": true,
+            "enabled": true,
+            "tags": [
+              "latest",
+              "dev",
+              "development",
+              "staging",
+              "main",
+              "master"
+            ]
+          },
+          "externalRefsMustNotCollide": {
+            "enabled": true
+          },
+          "functionMustComeFromAuthorizedSources": {
+            "enabled": true,
+            "trustSameGroupFunctions": true,
+            "trustedFunctions": []
+          },
+          "includesMustBeUpToDate": {
+            "enabled": true
+          },
+          "includesMustNotUseForbiddenVersions": {
+            "defaultBranchIsForbiddenVersion": true,
+            "enabled": true,
+            "forbiddenVersions": [
+              "latest",
+              "~latest",
+              "main",
+              "master",
+              "HEAD"
+            ]
+          },
+          "mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
+            "enabled": false
+          },
+          "mergeRequestApprovalRulesMustRequireMinimumApprovals": {
+            "enabled": false,
+            "minimumRequiredApprovals": 1
+          },
+          "mergeRequestApprovalSettingsMustBeCompliant": {
+            "enabled": false
+          },
+          "mergeRequestSettingsMustBeCompliant": {
+            "enabled": false
+          },
+          "pipelineMustIncludeComponent": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "pipelineMustIncludeTemplate": {
+            "enabled": false,
+            "requiredGroups": []
+          },
+          "pipelineMustNotEnableDebugTrace": {
+            "enabled": true,
+            "forbiddenVariables": [
+              "CI_DEBUG_TRACE",
+              "CI_DEBUG_SERVICES"
+            ]
+          },
+          "pipelineMustNotExecuteUnverifiedScripts": {
+            "enabled": true,
+            "trustedUrls": []
+          },
+          "pipelineMustNotIncludeHardcodedJobs": {
+            "enabled": false
+          },
+          "pipelineMustNotOverrideJobVariables": {
+            "enabled": true,
+            "variables": [
+              "SECURE_ANALYZERS_PREFIX",
+              "SAST_DISABLED",
+              "SAST_EXCLUDED_PATHS",
+              "SAST_EXCLUDED_ANALYZERS",
+              "SECRET_DETECTION_DISABLED",
+              "SECRET_DETECTION_EXCLUDED_PATHS",
+              "CONTAINER_SCANNING_DISABLED",
+              "DAST_DISABLED",
+              "DEPENDENCY_SCANNING_DISABLED",
+              "LICENSE_SCANNING_DISABLED"
+            ]
+          },
+          "pipelineMustNotUseDockerInDocker": {
+            "detectInsecureDaemon": true,
+            "enabled": true
+          },
+          "pipelineMustNotUseUnsafeVariableExpansion": {
+            "allowedPatterns": [],
+            "dangerousVariables": [
+              "CI_MERGE_REQUEST_TITLE",
+              "CI_MERGE_REQUEST_DESCRIPTION",
+              "CI_COMMIT_MESSAGE",
+              "CI_COMMIT_TITLE",
+              "CI_COMMIT_TAG_MESSAGE",
+              "CI_COMMIT_REF_NAME",
+              "CI_COMMIT_REF_SLUG",
+              "CI_COMMIT_BRANCH",
+              "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+              "CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME"
+            ],
+            "enabled": true
+          },
+          "projectMustHaveSecurityPolicySource": {
+            "enabled": false
+          },
+          "securityJobsMustNotBeWeakened": {
+            "allowFailureMustBeFalse": {
+              "enabled": false
+            },
+            "enabled": true,
+            "rulesMustNotBeRedefined": {
+              "enabled": true
+            },
+            "securityJobPatterns": [
+              "*-sast",
+              "secret_detection",
+              "container_scanning",
+              "*_dependency_scanning",
+              "gemnasium-*",
+              "dast",
+              "dast_*",
+              "license_scanning"
+            ],
+            "whenMustNotBeManual": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "version": "2.0"
+    },
+    "hash": "sha256:a83c2047c684f448868a9bc6f90eac8940d488a3f68a9e409d296785a3497e1f",
+    "source": "built-in default"
+  }
+}

@@ -1,0 +1,5 @@
+plumber version 0.7.17
+  commit: 5b53f2b22df4c14fdf23cea4e00b3c525548bbc1
+  built:  2026-10-30T23:13:44Z
+
+plumber v0.7.18 is available (you have 0.7.17) → mise upgrade github:getplumber/plumber

@@ -4,15 +4,17 @@
 //! Every side effect goes through [`Deps`] — the process runner, mise, the prompt, `PATH`,
 //! the log — so the whole flow is tested in-process with fakes.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::dedup;
 use crate::exec::{DEFAULT_MAX_OUTPUT, DEFAULT_TIMEOUT, Invocation, Runner};
 use crate::model::{Finding, Report, ToolRun, ToolStatus};
 use crate::prompt::Prompter;
+use crate::scanners::Context;
 use crate::scanners::{self, Outcome, ScanOptions, Scanner};
 use crate::tools::find_in_path;
 use crate::update::{Mise, UpdatePlan};
@@ -44,7 +46,13 @@ pub struct Options {
     pub update: UpdatePolicy,
     /// Deduplicate (see [`crate::dedup`]).
     pub dedup: bool,
+    /// Echo each scanner's standard error to this process's as it runs, with a heartbeat
+    /// when the tool is silent; for a terminal. The scanners then show their own progress.
+    pub live: bool,
 }
+
+/// Silence after which a live run prints a `still running` line.
+pub const HEARTBEAT: Duration = Duration::from_secs(15);
 
 impl Default for Options {
     fn default() -> Self {
@@ -55,6 +63,7 @@ impl Default for Options {
             max_output: DEFAULT_MAX_OUTPUT,
             update: UpdatePolicy::Ask,
             dedup: true,
+            live: false,
         }
     }
 }
@@ -188,6 +197,7 @@ pub fn scan(
     let mut options = options.clone();
     options.scan.detected = crate::detect::detect(&target, crate::detect::DEFAULT_MAX_FILES);
     options.scan.offline = !deps.online;
+    options.scan.live = options.live;
     deps.log(format!(
         "target: {} — {}",
         target.display(),
@@ -239,27 +249,33 @@ fn run_one(
     let (path, installed) = refresh(scanner, path, options, deps);
     let version = installed.map(|v| v.to_string());
 
-    let mut inv = Invocation::new(&path)
-        .args(scanner.scan_args(&options.scan))
-        .cwd(target)
-        .timeout(options.timeout)
-        .max_output(options.max_output);
-    for (key, value) in scanner.env() {
-        inv = inv.env(key, value);
-    }
     if let Some(plan) = scanner.plan(&options.scan) {
         deps.log(format!("{name}: {plan}"));
     }
     deps.log(format!("{name}: scanning…"));
-    let output = match deps.runner.run(&inv) {
-        Ok(output) => output,
-        Err(err) => {
-            deps.log(format!("{name}: FAILED: {err:#}"));
-            return (failed(name, version, err.to_string(), 0), Vec::new());
+    let inherited = inherited(scanner.inherit_env());
+    let (outcome, elapsed) = {
+        let mut ctx = Context::new(
+            name,
+            path,
+            target,
+            &options.scan,
+            deps.runner,
+            &mut *deps.log,
+        );
+        ctx.timeout = options.timeout;
+        ctx.max_output = options.max_output;
+        ctx.inherited = inherited;
+        ctx.scratch_root = scratch_root();
+        if options.live {
+            ctx.live = Some(Arc::new(Mutex::new(std::io::stderr())));
+            ctx.heartbeat = Some(HEARTBEAT);
         }
+        let outcome = scanner.execute(&mut ctx);
+        (outcome, ctx.elapsed)
     };
-    let duration_ms = u64::try_from(output.duration.as_millis()).unwrap_or(u64::MAX);
-    match scanner.interpret(&output) {
+    let duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+    match outcome {
         Outcome::Completed(parsed) => {
             for warning in &parsed.warnings {
                 deps.log(format!("{name}: {warning}"));
@@ -336,6 +352,25 @@ fn refresh(
         None => deps.log(format!("{name}: updated, version unreadable")),
     }
     (path, now.or(installed))
+}
+
+/// The parent-environment variables a scanner asked for, those that are set.
+fn inherited(names: &[&str]) -> Vec<(OsString, OsString)> {
+    names
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value)))
+        .collect()
+}
+
+/// Where scanners keep intermediate files: the user's cache directory (`$XDG_CACHE_HOME` or
+/// `~/.cache`, under `sast3uh`), a real disk where `/tmp` may be memory; `None` (the system
+/// temporary directory) when neither is known.
+fn scratch_root() -> Option<PathBuf> {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
+    Some(cache.join("sast3uh"))
 }
 
 fn skipped(name: &str, version: Option<String>, reason: &str) -> ToolRun {
@@ -619,6 +654,7 @@ mod tests {
     const BEARER: &[u8] = include_bytes!("../tests/fixtures/bearer/report.json");
     const LUACHECK: &[u8] = include_bytes!("../tests/fixtures/luacheck/report.txt");
     const TRIVY: &[u8] = include_bytes!("../tests/fixtures/trivy/report.json");
+    const PLUMBER: &[u8] = include_bytes!("../tests/fixtures/plumber/report.json");
 
     /// A fake `PATH` holding the named stub binaries.
     fn stub_path(names: &[&str]) -> (tempfile::TempDir, OsString) {
@@ -710,6 +746,145 @@ mod tests {
         })
     }
 
+    #[test]
+    fn live_mode_hands_every_scan_a_stderr_echo_and_a_heartbeat_and_drops_quiet_flags() {
+        let (_dir, path_var) = stub_path(&["semgrep", "bearer", "trivy"]);
+        let target = tempfile::tempdir().unwrap();
+        let runner = FakeRunner::new(scripted);
+        let mut prompter = FixedAnswer(false);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let options = Options {
+            live: true,
+            ..Options::default()
+        };
+        scan(target.path(), &options, &mut deps).unwrap();
+        let scans: Vec<Invocation> = runner
+            .calls()
+            .into_iter()
+            .filter(|inv| !is_version_call(inv))
+            .collect();
+        assert_eq!(scans.len(), 3);
+        for inv in &scans {
+            assert!(inv.live.is_some(), "{inv:?}");
+            assert_eq!(inv.heartbeat, Some(HEARTBEAT));
+            assert_eq!(inv.label, tool_of(inv));
+            assert!(
+                !inv.args
+                    .iter()
+                    .any(|a| a == "--quiet" || a == "--hide-progress-bar" || a == "--no-progress"),
+                "{inv:?}"
+            );
+        }
+        let versions: Vec<Invocation> =
+            runner.calls().into_iter().filter(is_version_call).collect();
+        assert!(
+            versions.iter().all(|inv| inv.live.is_none()),
+            "only scans echo"
+        );
+
+        let runner = FakeRunner::new(scripted);
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        scan(target.path(), &Options::default(), &mut deps).unwrap();
+        for inv in runner.calls().iter().filter(|inv| !is_version_call(inv)) {
+            assert!(inv.live.is_none());
+            assert!(inv.args.iter().any(|a| a == "--quiet"), "{inv:?}");
+        }
+    }
+
+    #[test]
+    fn only_plumber_may_inherit_provider_tokens_and_nothing_else_of_the_environment() {
+        let (_dir, path_var) = stub_path(&["semgrep", "plumber"]);
+        let target = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(target.path().join(".github/workflows")).unwrap();
+        std::fs::write(
+            target.path().join(".github/workflows/ci.yml"),
+            "on: push
+",
+        )
+        .unwrap();
+        let runner = FakeRunner::new(|inv: &Invocation| {
+            if tool_of(inv) == "plumber" && !is_version_call(inv) {
+                let at = inv.args.iter().position(|a| a == "--output").unwrap();
+                std::fs::write(&inv.args[at + 1], PLUMBER).unwrap();
+                return Ok(output(Some(0), b"", ""));
+            }
+            scripted(inv)
+        });
+        let mut prompter = FixedAnswer(false);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let report = scan(target.path(), &Options::default(), &mut deps).unwrap();
+        let plumber = report.tools.iter().find(|t| t.tool == "plumber").unwrap();
+        assert_eq!(plumber.status, ToolStatus::Completed, "{plumber:?}");
+        assert_eq!(plumber.findings, 22);
+        let tokens = scanners::plumber::TOKENS;
+        for inv in runner.calls() {
+            let keys: Vec<String> = inv
+                .env
+                .iter()
+                .map(|(k, _)| k.to_string_lossy().into_owned())
+                .collect();
+            if tool_of(&inv) == "plumber" {
+                assert!(
+                    keys.iter()
+                        .all(|k| k == "NO_COLOR" || tokens.contains(&k.as_str())),
+                    "{keys:?}"
+                );
+            } else {
+                assert!(
+                    !keys.iter().any(|k| tokens.contains(&k.as_str())),
+                    "{keys:?}"
+                );
+            }
+        }
+        let scan_inv = runner
+            .calls()
+            .into_iter()
+            .find(|inv| tool_of(inv) == "plumber" && !is_version_call(inv))
+            .unwrap();
+        let has_token = tokens.iter().any(|t| std::env::var_os(t).is_some());
+        assert_eq!(
+            !scan_inv.args.iter().any(|a| a == "--skip-controls"),
+            has_token,
+            "the branch-protection control runs only with a token: {scan_inv:?}"
+        );
+        let out: String = scan_inv
+            .args
+            .iter()
+            .skip_while(|a| *a != "--output")
+            .nth(1)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            !out.starts_with(&target.path().to_string_lossy().into_owned()),
+            "report never in the target: {out}"
+        );
+        assert!(!Path::new(&out).exists(), "scratch deleted after the run");
+    }
+
     // `Deps::mise` is an `Option`: the helper hands back exactly what the field takes.
     #[allow(clippy::unnecessary_wraps)]
     fn mise() -> Option<Mise> {
@@ -750,12 +925,22 @@ mod tests {
 
         let report = scan(target.path(), &Options::default(), &mut deps).unwrap();
 
-        assert_eq!(report.tools.len(), 4);
+        assert_eq!(report.tools.len(), 6);
         assert!(
             report
                 .tools
                 .iter()
+                .filter(|t| !matches!(t.tool.as_str(), "codeql" | "plumber"))
                 .all(|t| t.status == ToolStatus::Completed),
+            "{:?}",
+            report.tools
+        );
+        assert!(
+            report
+                .tools
+                .iter()
+                .filter(|t| matches!(t.tool.as_str(), "codeql" | "plumber"))
+                .all(|t| matches!(&t.status, ToolStatus::Skipped { reason } if reason == "not installed")),
             "{:?}",
             report.tools
         );
@@ -940,7 +1125,7 @@ mod tests {
             },
             "trivy"
         );
-        assert_eq!(report.tools[3].status, ToolStatus::Completed, "luacheck");
+        assert_eq!(report.tools[5].status, ToolStatus::Completed, "luacheck");
         assert_eq!(report.summary.total, 6);
         let text = String::from_utf8(log).unwrap();
         assert!(text.contains("install mise"), "{text}");
@@ -1026,15 +1211,18 @@ mod tests {
         );
 
         let options = Options {
-            tools: vec!["codeql".into()],
+            tools: vec!["gosec".into()],
             ..Options::default()
         };
         let err = scan(target.path(), &options, &mut deps).unwrap_err();
         assert!(
-            matches!(err, PipelineError::UnknownTool { ref name, .. } if name == "codeql"),
+            matches!(err, PipelineError::UnknownTool { ref name, .. } if name == "gosec"),
             "{err}"
         );
-        assert!(err.to_string().contains("semgrep, bearer, trivy, luacheck"));
+        assert!(
+            err.to_string()
+                .contains("semgrep, bearer, trivy, codeql, plumber, luacheck")
+        );
     }
 
     #[test]
@@ -1067,9 +1255,9 @@ mod tests {
             report.tools[0]
         );
         assert!(
-            matches!(&report.tools[3].status, ToolStatus::Failed { reason } if reason.contains("bad --formatter")),
+            matches!(&report.tools[5].status, ToolStatus::Failed { reason } if reason.contains("bad --formatter")),
             "{:?}",
-            report.tools[3]
+            report.tools[5]
         );
         assert!(report.has_failures());
         assert!(report.is_clean());
@@ -1469,7 +1657,7 @@ mod tests {
             log: &mut log,
         };
         let infos = inventory(&mut deps);
-        assert_eq!(infos.len(), 4);
+        assert_eq!(infos.len(), 6);
         assert_eq!(
             infos[0].path.as_deref(),
             Some(dir.path().join("semgrep").as_path())
@@ -1479,9 +1667,9 @@ mod tests {
         assert_eq!(infos[0].mise_id, "semgrep");
         assert_eq!(infos[2].mise_id, "trivy");
         assert_eq!(infos[2].latest, Some(Version::new(0, 76, 1)));
-        assert_eq!(infos[3].path, None);
-        assert_eq!(infos[3].installed, None);
-        assert_eq!(infos[3].mise_id, "ubi:lunarmodules/luacheck");
+        assert_eq!(infos[5].path, None);
+        assert_eq!(infos[5].installed, None);
+        assert_eq!(infos[5].mise_id, "ubi:lunarmodules/luacheck");
         let mut out = Vec::new();
         write_inventory(&infos, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();

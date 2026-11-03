@@ -51,7 +51,19 @@ impl Stubs {
                     fx.join("luacheck/version.txt").display(),
                     fx.join("luacheck/report.txt").display()
                 ),
-                "luacheck-broken" => "#!/bin/sh\ncase \"$1\" in --version) echo 'Luacheck: 1.2.0';; *) echo 'Critical error: boom'; exit 4;; esac\n".to_owned(),
+                                "luacheck-broken" => "#!/bin/sh\ncase \"$1\" in --version) echo 'Luacheck: 1.2.0';; *) echo 'Critical error: boom'; exit 4;; esac\n".to_owned(),
+                // Plumber writes its report where `--output` says; CodeQL creates a database
+                // (nothing to replay) then analyses it into the `--output` SARIF.
+                "plumber" => format!(
+                    "#!/bin/sh\ncase \"$1\" in version) cat '{}';; analyze) while [ $# -gt 0 ]; do if [ \"$1\" = --output ]; then cp '{}' \"$2\"; fi; shift; done; exit 0;; *) exit 2;; esac\n",
+                    fx.join("plumber/version.txt").display(),
+                    fx.join("plumber/report.json").display()
+                ),
+                "codeql" => format!(
+                    "#!/bin/sh\ncase \"$1\" in version) cat '{}';; database) if [ \"$2\" = create ]; then exit 0; fi; while [ $# -gt 0 ]; do if [ \"$1\" = --output ]; then cp '{}' \"$2\"; fi; shift; done; exit 0;; *) exit 2;; esac\n",
+                    fx.join("codeql/version.txt").display(),
+                    fx.join("codeql/report.sarif").display()
+                ),
                 "trivy" => format!(
                     "#!/bin/sh\ncase \"$1\" in --version) cat '{}';; *) cat '{}';; esac\n",
                     fx.join("trivy/version.txt").display(),
@@ -159,11 +171,11 @@ fn scan_with_an_empty_path_skips_everything_and_exits_clean() {
 fn unknown_tool_exits_3() {
     let dir = tempfile::tempdir().expect("tempdir");
     bin()
-        .args(["scan", "--offline", "--tools", "codeql"])
+        .args(["scan", "--offline", "--tools", "gosec"])
         .arg(dir.path())
         .assert()
         .code(3)
-        .stderr(predicate::str::contains("unknown tool `codeql`"));
+        .stderr(predicate::str::contains("unknown tool `gosec`"));
 }
 
 #[test]
@@ -220,7 +232,117 @@ fn tools_lists_every_known_scanner_even_with_an_empty_path() {
                 .and(predicate::str::contains("bearer"))
                 .and(predicate::str::contains("luacheck"))
                 .and(predicate::str::contains("trivy"))
+                .and(predicate::str::contains("codeql"))
+                .and(predicate::str::contains("plumber"))
                 .and(predicate::str::contains("missing")),
+        );
+}
+
+#[cfg(unix)]
+#[test]
+fn codeql_and_plumber_run_on_a_project_with_code_and_workflows() {
+    let stubs = Stubs::new(&["codeql", "plumber"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join(".github/workflows")).expect("mkdir");
+    std::fs::write(dir.path().join(".github/workflows/ci.yml"), "on: push\n").expect("write");
+    std::fs::write(dir.path().join("app.js"), "console.log(1)\n").expect("write");
+    let output = bin()
+        .args([
+            "scan",
+            "--offline",
+            "--format",
+            "json",
+            "--tools",
+            "codeql",
+            "--tools",
+            "plumber",
+        ])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(1)
+        .stderr(
+            predicate::str::contains("codeql 2.27.3")
+                .and(predicate::str::contains("plumber 0.7.17"))
+                .and(predicate::str::contains(
+                    "codeql: security-extended suite for javascript, actions",
+                ))
+                .and(predicate::str::contains(
+                    "codeql: javascript: extracting the database",
+                ))
+                .and(predicate::str::contains(
+                    "codeql: actions: running the security-extended suite",
+                ))
+                .and(predicate::str::contains("plumber: CI/CD trust policy")),
+        )
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
+    let tools = json["tools"].as_array().expect("tools");
+    assert_eq!(tools.len(), 2, "{json}");
+    assert!(
+        tools.iter().all(|t| t["status"]["state"] == "completed"),
+        "{json}"
+    );
+    assert_eq!(tools[0]["tool"], "codeql");
+    assert_eq!(
+        tools[0]["findings"], 10,
+        "5 per language, two languages: {json}"
+    );
+    assert_eq!(tools[1]["tool"], "plumber");
+    assert_eq!(
+        tools[1]["findings"], 22,
+        "17 issues and 5 attack paths: {json}"
+    );
+    // The stub replays the same SARIF for both languages: the five exact duplicates merge.
+    assert_eq!(json["summary"]["duplicates_removed"], 5, "{json}");
+    assert_eq!(json["summary"]["total"], 27, "{json}");
+    assert!(
+        json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["tool"] == "plumber"
+                && f["rule_id"] == "attack-path"
+                && f["flow"].is_array()),
+        "{json}"
+    );
+    assert!(
+        json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["tool"] == "codeql"
+                && f["rule_id"] == "js/reflected-xss"
+                && f["cwes"][0] == 79),
+        "{json}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn codeql_and_plumber_are_skipped_on_a_project_without_code_or_workflows() {
+    let stubs = Stubs::new(&["codeql", "plumber"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("notes.txt"), "nothing to scan\n").expect("write");
+    bin()
+        .args([
+            "scan",
+            "--offline",
+            "--tools",
+            "codeql",
+            "--tools",
+            "plumber",
+        ])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(0)
+        .stderr(
+            predicate::str::contains("codeql: skipped: no language CodeQL supports").and(
+                predicate::str::contains("plumber: skipped: no CI/CD configuration"),
+            ),
         );
 }
 
@@ -244,14 +366,21 @@ fn scan_runs_the_stubs_merges_and_exits_1_on_findings() {
         .clone();
     let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
     assert_eq!(json["schema_version"], 2);
-    assert_eq!(json["tools"].as_array().unwrap().len(), 4);
+    let tools = json["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 6);
     assert!(
-        json["tools"]
-            .as_array()
-            .unwrap()
+        tools
             .iter()
+            .filter(|t| t["tool"] != "codeql" && t["tool"] != "plumber")
             .all(|t| t["status"]["state"] == "completed"),
         "{json}"
+    );
+    assert!(
+        tools
+            .iter()
+            .filter(|t| t["tool"] == "codeql" || t["tool"] == "plumber")
+            .all(|t| t["status"]["state"] == "skipped"),
+        "not stubbed, so not installed: {json}"
     );
     // 9 + 7 + 6 findings; Bearer and Semgrep agree on four lines (stripe key, eval,
     // subprocess shell=True, pickle), each merged into one finding at the worst severity.

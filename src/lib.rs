@@ -35,7 +35,7 @@ pub mod update;
 pub mod version;
 
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -99,7 +99,9 @@ where
     let runner = RealRunner;
     let mut prompter = TerminalPrompter;
     let path_var = std::env::var_os("PATH");
-    let mut log = std::io::stderr().lock();
+    // Not `stderr().lock()`: a live scan echoes the scanner's output from another thread
+    // through the same handle, and a lock held here for the whole run would block it.
+    let mut log = std::io::stderr();
     let mut deps = Deps {
         runner: &runner,
         mise: Mise::detect(path_var.as_deref()),
@@ -187,6 +189,7 @@ fn scan(args: &ScanArgs, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::R
             args.update
         },
         dedup: !args.no_dedup,
+        live: std::io::stderr().is_terminal(),
     };
 
     let report = pipeline::scan(&args.path, &options, deps)
@@ -404,7 +407,7 @@ mod tests {
             target.path().to_str().expect("utf-8"),
             "--offline",
             "-t",
-            "codeql",
+            "gosec",
         ]);
         let runner = FakeRunner::new(|_| panic!("nothing must run"));
         let mut prompter = FixedAnswer(false);
@@ -419,7 +422,7 @@ mod tests {
         };
         let err = run_with(cli, &mut Vec::new(), &mut deps).expect_err("unknown tool");
         assert!(
-            format!("{err:#}").contains("unknown tool `codeql`"),
+            format!("{err:#}").contains("unknown tool `gosec`"),
             "{err:#}"
         );
     }

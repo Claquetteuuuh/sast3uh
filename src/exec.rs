@@ -8,9 +8,11 @@
 //! kills the whole group: a scanner's own subprocesses cannot outlive it holding the pipes.
 
 use std::ffi::{OsStr, OsString};
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Default wall-clock limit for one scanner.
@@ -38,8 +40,11 @@ const INHERITED_ENV: &[&str] = &[
     "XDG_STATE_HOME",
 ];
 
+/// Where a child's standard error is echoed live, on top of being captured.
+pub type LiveSink = Arc<Mutex<dyn Write + Send>>;
+
 /// A command to run.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Invocation {
     /// Absolute path of the executable.
     pub program: PathBuf,
@@ -53,6 +58,29 @@ pub struct Invocation {
     pub timeout: Duration,
     /// Cap on each captured stream, in bytes; the rest is read and discarded.
     pub max_output: usize,
+    /// Echo the child's standard error here as it arrives (progress bars included).
+    pub live: Option<LiveSink>,
+    /// With `live`: after this long without a byte from the child, write a
+    /// `<label>: still running (<elapsed>)` line to the sink, and again at each interval.
+    pub heartbeat: Option<Duration>,
+    /// Name used in heartbeat lines.
+    pub label: String,
+}
+
+impl std::fmt::Debug for Invocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Invocation")
+            .field("program", &self.program)
+            .field("args", &self.args)
+            .field("cwd", &self.cwd)
+            .field("env", &self.env)
+            .field("timeout", &self.timeout)
+            .field("max_output", &self.max_output)
+            .field("live", &self.live.is_some())
+            .field("heartbeat", &self.heartbeat)
+            .field("label", &self.label)
+            .finish()
+    }
 }
 
 impl Invocation {
@@ -65,7 +93,25 @@ impl Invocation {
             env: Vec::new(),
             timeout: DEFAULT_TIMEOUT,
             max_output: DEFAULT_MAX_OUTPUT,
+            live: None,
+            heartbeat: None,
+            label: String::new(),
         }
+    }
+
+    /// Echo standard error live to `sink`; with `heartbeat`, add a `<label>: still running`
+    /// line after that long without output.
+    #[must_use]
+    pub fn live(
+        mut self,
+        sink: LiveSink,
+        heartbeat: Option<Duration>,
+        label: impl Into<String>,
+    ) -> Self {
+        self.live = Some(sink);
+        self.heartbeat = heartbeat;
+        self.label = label.into();
+        self
     }
 
     /// Add one argument.
@@ -236,10 +282,12 @@ pub fn run(inv: &Invocation) -> Result<Output, ExecError> {
         .ok_or_else(|| ExecError::Pipe(inv.program.clone()))?;
     let cap = inv.max_output;
 
+    let last_output = AtomicU64::new(0);
     let (out, err, waited) = std::thread::scope(|scope| {
-        let out = scope.spawn(move || drain(stdout, cap));
-        let err = scope.spawn(move || drain(stderr, cap));
-        let waited = wait_with_timeout(&mut child, inv.timeout, &inv.program);
+        let out = scope.spawn(move || drain(stdout, cap, None));
+        let live = inv.live.as_ref().map(|sink| (sink, &last_output, start));
+        let err = scope.spawn(move || drain(stderr, cap, live));
+        let waited = wait_with_timeout(&mut child, inv, start, &last_output);
         (out.join(), err.join(), waited)
     });
     let (code, timed_out) = waited?;
@@ -271,8 +319,14 @@ fn inherited_env() -> impl Iterator<Item = (&'static OsStr, OsString)> {
         .filter_map(|name| std::env::var_os(name).map(|value| (OsStr::new(name), value)))
 }
 
-/// Read a stream to its end, keeping at most `cap` bytes.
-fn drain(mut reader: impl Read, cap: usize) -> (Vec<u8>, bool) {
+/// Read a stream to its end, keeping at most `cap` bytes. With `live`, every chunk is also
+/// echoed to the sink as it arrives and the time of the last byte is noted (milliseconds
+/// since `start`) for the heartbeat.
+fn drain(
+    mut reader: impl Read,
+    cap: usize,
+    live: Option<(&LiveSink, &AtomicU64, Instant)>,
+) -> (Vec<u8>, bool) {
     let mut kept = Vec::new();
     let mut truncated = false;
     let mut chunk = [0u8; 8192];
@@ -282,9 +336,18 @@ fn drain(mut reader: impl Read, cap: usize) -> (Vec<u8>, bool) {
             Ok(n) => {
                 let room = cap.saturating_sub(kept.len());
                 let take = n.min(room);
-                kept.extend(chunk.iter().take(take));
+                let received = chunk.get(..n).unwrap_or_default();
+                kept.extend_from_slice(chunk.get(..take).unwrap_or_default());
                 if take < n {
                     truncated = true;
+                }
+                if let Some((sink, seen, start)) = live {
+                    seen.store(millis_since(start), Ordering::Relaxed);
+                    // Best effort: a closed terminal must not stop the capture.
+                    if let Ok(mut sink) = sink.lock() {
+                        let _ = sink.write_all(received);
+                        let _ = sink.flush();
+                    }
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
@@ -294,26 +357,69 @@ fn drain(mut reader: impl Read, cap: usize) -> (Vec<u8>, bool) {
     (kept, truncated)
 }
 
+fn millis_since(start: Instant) -> u64 {
+    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// `1m02s`-style elapsed time for heartbeat and summary lines.
+#[must_use]
+pub fn human_elapsed(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    if secs >= 60 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{secs}s")
+    }
+}
+
+/// Write a heartbeat line when the child has been silent for `every`, measured from the
+/// later of the last byte received and the last heartbeat.
+fn heartbeat(inv: &Invocation, start: Instant, last_output: &AtomicU64, last_beat: &mut u64) {
+    let (Some(sink), Some(every)) = (&inv.live, inv.heartbeat) else {
+        return;
+    };
+    let now = millis_since(start);
+    let quiet_since = last_output.load(Ordering::Relaxed).max(*last_beat);
+    let every_ms = u64::try_from(every.as_millis()).unwrap_or(u64::MAX);
+    if now.saturating_sub(quiet_since) < every_ms {
+        return;
+    }
+    if let Ok(mut sink) = sink.lock() {
+        let _ = writeln!(
+            sink,
+            "{}: still running ({})",
+            inv.label,
+            human_elapsed(start.elapsed())
+        );
+        let _ = sink.flush();
+    }
+    *last_beat = now;
+}
+
 fn wait_with_timeout(
     child: &mut Child,
-    timeout: Duration,
-    program: &Path,
+    inv: &Invocation,
+    start: Instant,
+    last_output: &AtomicU64,
 ) -> Result<(Option<i32>, bool), ExecError> {
-    let deadline = Instant::now() + timeout;
+    let program = &inv.program;
+    let deadline = start + inv.timeout;
+    let mut last_beat = 0u64;
     loop {
         let waited = child.try_wait().map_err(|source| ExecError::Wait {
-            program: program.to_path_buf(),
+            program: program.clone(),
             source,
         })?;
         if let Some(status) = waited {
             return Ok((status.code(), false));
         }
+        heartbeat(inv, start, last_output, &mut last_beat);
         if Instant::now() >= deadline {
             // Best effort: the child may already be gone, and a kill that fails leaves
             // nothing better to do than report the timeout.
             kill_tree(child);
             let status = child.wait().map_err(|source| ExecError::Wait {
-                program: program.to_path_buf(),
+                program: program.clone(),
                 source,
             })?;
             return Ok((status.code(), true));
@@ -408,6 +514,27 @@ mod tests {
 
     fn sh() -> PathBuf {
         crate::tools::find_in_path("sh", std::env::var_os("PATH").as_deref()).expect("sh on PATH")
+    }
+
+    /// A sink the test reads back once the run is over.
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|_| std::io::Error::other("poisoned"))?
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn capture() -> (LiveSink, Arc<Mutex<Vec<u8>>>) {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        (Arc::new(Mutex::new(Capture(Arc::clone(&buf)))), buf)
     }
 
     #[test]
@@ -524,6 +651,72 @@ mod tests {
                 .all(|(k, _)| k.to_string_lossy().starts_with("CARGO_"))
         );
         assert!(env_with_prefix("DEFINITELY_NOT_SET_PREFIX_").is_empty());
+    }
+
+    #[test]
+    fn live_stderr_is_echoed_as_it_arrives_and_still_captured() {
+        let (sink, buf) = capture();
+        let out = run(&Invocation::new(sh())
+            .args(["-c", "printf 'a\\rb\\n' >&2; echo out; printf 'c' >&2"])
+            .live(sink, None, "demo"))
+        .unwrap();
+        assert_eq!(out.stdout_text(), "out\n", "stdout is never echoed");
+        assert_eq!(out.stderr_text(), "a\rb\nc");
+        let echoed = buf.lock().unwrap().clone();
+        assert_eq!(
+            echoed, b"a\rb\nc",
+            "carriage returns and all, byte for byte"
+        );
+    }
+
+    #[test]
+    fn a_heartbeat_line_appears_when_the_child_is_silent() {
+        let (sink, buf) = capture();
+        let out = run(&Invocation::new(sh())
+            .args(["-c", "sleep 1; echo done >&2"])
+            .live(sink, Some(Duration::from_millis(300)), "slow"))
+        .unwrap();
+        assert!(out.success());
+        let echoed = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(echoed.contains("slow: still running ("), "{echoed}");
+        assert!(echoed.ends_with("done\n"), "{echoed}");
+        assert_eq!(
+            out.stderr_text(),
+            "done\n",
+            "heartbeats are never captured as tool output"
+        );
+    }
+
+    #[test]
+    fn no_heartbeat_without_an_interval_or_while_the_child_talks() {
+        let (sink, buf) = capture();
+        run(&Invocation::new(sh())
+            .args(["-c", "sleep 0.5; echo done >&2"])
+            .live(sink, None, "quiet"))
+        .unwrap();
+        assert_eq!(buf.lock().unwrap().as_slice(), b"done\n");
+
+        let (sink, buf) = capture();
+        run(&Invocation::new(sh())
+            .args([
+                "-c",
+                "for i in 1 2 3 4 5 6; do echo tick >&2; sleep 0.1; done",
+            ])
+            .live(
+                Arc::clone(&sink),
+                Some(Duration::from_millis(400)),
+                "chatty",
+            ))
+        .unwrap();
+        let echoed = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(!echoed.contains("still running"), "{echoed}");
+    }
+
+    #[test]
+    fn elapsed_times_read_well() {
+        assert_eq!(human_elapsed(Duration::from_secs(7)), "7s");
+        assert_eq!(human_elapsed(Duration::from_secs(62)), "1m02s");
+        assert_eq!(human_elapsed(Duration::from_secs(3600)), "60m00s");
     }
 
     #[test]

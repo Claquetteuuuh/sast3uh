@@ -3,7 +3,7 @@
 ## Project overview
 
 sast3uh is a Rust CLI: a hardened wrapper that runs several analysers
-(Semgrep, Bearer, Trivy, Luacheck today) over a directory, parses what each one says,
+(Semgrep, Bearer, Trivy, CodeQL, Plumber, Luacheck today) over a directory, parses what each one says,
 removes the duplicates and writes one report — text, JSON, YAML, XML or HTML —
 with one exit code. Before scanning it checks each scanner against the newest
 version mise knows and offers (asks) to install or update it through mise —
@@ -39,8 +39,9 @@ sast3uh/
 │   ├── cli.rs           # clap definition only — no behaviour
 │   ├── pipeline.rs      # locate (mise which → PATH) → version → install/update (ask) →
 │   │                    # run → parse → dedup → Report
-│   ├── scanners/        # Scanner trait + registry; semgrep.rs, bearer.rs, trivy.rs, luacheck.rs
-│   │                    # (args, env, output → findings, mise id) — pure glue
+│   ├── scanners/        # Scanner trait + Context + registry; semgrep.rs, bearer.rs, trivy.rs,
+│   │                    # codeql.rs (multi-step: database per language + analyze), plumber.rs,
+│   │                    # luacheck.rs (args, env, output → findings, mise id) — pure glue
 │   ├── detect.rs        # languages + markers of the target from file names (no reads)
 │   ├── packs.rs         # measured Semgrep pack catalogue, selection by language/profile
 │   ├── exec.rs          # THE process boundary: argv list, scrubbed env, cwd, timeout, cap
@@ -74,8 +75,14 @@ They are documented in `src/lib.rs` and asserted in `tests/cli.rs`.
 
 1. `src/scanners/<tool>.rs`: a unit struct implementing `Scanner` — name,
    binary, mise id (check `mise registry`; else `aqua:owner/repo` or
-   `ubi:owner/repo`), version args, scan args (the target is the cwd, pass
-   `.`), `interpret` (exit code + stdout → `Outcome`).
+   `github:owner/repo`), version args, scan args (the target is the cwd, pass
+   `.`), `interpret` (exit code + stdout → `Outcome`). A tool that needs
+   several invocations or writes its report to a file overrides `execute`
+   and drives them through the `Context` (`ctx.invocation`, `ctx.run`,
+   `ctx.scratch()` for intermediate files — never in the target —
+   `ctx.log`); a tool that needs a token names it in `inherit_env`. In live
+   mode (`ScanOptions::live`, a terminal) an adapter drops its `--quiet` /
+   progress-hiding flags so the tool shows its own progress.
 2. A pure `parse(bytes)` function tested on **recorded output** copied into
    `tests/fixtures/<tool>/report.*` and `version.txt` (run the real tool on
    a sample project once; never call it from a test), that keeps every
@@ -221,8 +228,16 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
   `--detection-priority comprehensive --license-full` in the exhaustive
   profile, and `--skip-db-update --skip-java-db-update --skip-check-update
   --offline-scan` under `--offline`); Luacheck runs with the default
-  `std = max` and the project's `.luacheckrc`. A new scanner's adapter
-  documents its own "most exhaustive" invocation in its `scan_args`.
+  `std = max` and the project's `.luacheckrc`; CodeQL runs `database create`
+  per detected language (`--build-mode=none` for Java/Kotlin, C#, C/C++,
+  Rust; `autobuild` for Go and Swift; nothing for JS/TS, Python, Ruby and
+  `actions`) then `database analyze` with the language's `security-extended`
+  suite (`--download` unless offline), the database in the scratch directory
+  and deleted after; Plumber runs `analyze --min-points 0 --print=false
+  --output <scratch>/plumber.json`, skipping `branchMustBeProtected` when no
+  provider token is inherited (otherwise the report is "degraded": no score,
+  no severity). A new scanner's adapter documents its own "most exhaustive"
+  invocation in its `scan_args` (or `execute`).
 - Trivy masks the secrets it reports (`***`); the masked `Match` is the
   finding's message and the masked code lines its snippet — nothing else of
   a secret is ever kept.

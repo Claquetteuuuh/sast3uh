@@ -5,15 +5,20 @@
 //! keeps every parser testable against recorded output in `tests/fixtures/<tool>/`.
 
 pub mod bearer;
+pub mod codeql;
 pub mod luacheck;
+pub mod plumber;
 pub mod semgrep;
 pub mod trivy;
 
 use std::ffi::OsString;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Deserializer};
 
-use crate::exec::Output;
+use crate::exec::{ExecError, Invocation, LiveSink, Output, Runner};
 use crate::model::{Diagnostic, Finding, SkippedPath};
 use crate::version::Version;
 
@@ -29,6 +34,8 @@ pub struct ScanOptions {
     pub detected: crate::detect::Detected,
     /// No network at all: scanners that fetch databases use what they have cached.
     pub offline: bool,
+    /// Standard error is a terminal: let the tool show its own progress (no `--quiet`).
+    pub live: bool,
 }
 
 impl Default for ScanOptions {
@@ -38,6 +45,7 @@ impl Default for ScanOptions {
             semgrep_profile: crate::packs::Profile::Exhaustive,
             detected: crate::detect::Detected::default(),
             offline: false,
+            live: false,
         }
     }
 }
@@ -151,6 +159,143 @@ pub(crate) fn value_text(value: &serde_json::Value) -> String {
     }
 }
 
+/// What a scan runs with: the located binary, the target, the runner and the knobs. The
+/// pipeline builds one per scanner; a multi-step scanner (`CodeQL`, Plumber) drives several
+/// invocations through it and keeps its intermediate files in [`Context::scratch`], a private
+/// directory deleted when the context is dropped.
+pub struct Context<'a> {
+    /// The scanner's display name (heartbeat lines, logs).
+    pub name: &'static str,
+    /// Absolute path of the scanner's binary.
+    pub program: PathBuf,
+    /// The canonical target directory; every invocation runs inside it.
+    pub target: &'a Path,
+    /// Per-scan knobs.
+    pub options: &'a ScanOptions,
+    /// Wall-clock limit per invocation.
+    pub timeout: Duration,
+    /// Capture cap per stream.
+    pub max_output: usize,
+    /// Runs the processes.
+    pub runner: &'a dyn Runner,
+    /// Where the tool's standard error is echoed live, when it is.
+    pub live: Option<LiveSink>,
+    /// Silence after which a heartbeat line is written to `live`.
+    pub heartbeat: Option<Duration>,
+    /// Parent-environment variables this scanner may see (see [`Scanner::inherit_env`]).
+    pub inherited: Vec<(OsString, OsString)>,
+    /// Progress log (standard error in the CLI).
+    pub log: &'a mut dyn Write,
+    /// Where the scratch directory is created; the system temporary directory when `None`.
+    pub scratch_root: Option<PathBuf>,
+    /// Time spent in invocations so far.
+    pub elapsed: Duration,
+    scratch: Option<tempfile::TempDir>,
+}
+
+impl<'a> Context<'a> {
+    /// A context with no live echo, no inherited variables and the default scratch root.
+    #[must_use]
+    pub fn new(
+        name: &'static str,
+        program: PathBuf,
+        target: &'a Path,
+        options: &'a ScanOptions,
+        runner: &'a dyn Runner,
+        log: &'a mut dyn Write,
+    ) -> Self {
+        Context {
+            name,
+            program,
+            target,
+            options,
+            timeout: crate::exec::DEFAULT_TIMEOUT,
+            max_output: crate::exec::DEFAULT_MAX_OUTPUT,
+            runner,
+            live: None,
+            heartbeat: None,
+            inherited: Vec::new(),
+            log,
+            scratch_root: None,
+            elapsed: Duration::ZERO,
+            scratch: None,
+        }
+    }
+
+    /// An invocation of the scanner's binary in the target, with the context's limits, the
+    /// inherited variables, `env` on top, and the live echo when there is one.
+    #[must_use]
+    pub fn invocation(&self, args: Vec<OsString>, env: &[(OsString, OsString)]) -> Invocation {
+        let mut inv = Invocation::new(&self.program)
+            .args(args)
+            .cwd(self.target)
+            .timeout(self.timeout)
+            .max_output(self.max_output);
+        for (key, value) in self.inherited.iter().chain(env.iter()) {
+            inv = inv.env(key.clone(), value.clone());
+        }
+        if let Some(sink) = &self.live {
+            inv = inv.live(sink.clone(), self.heartbeat, self.name);
+        }
+        inv
+    }
+
+    /// Run `inv`, adding its duration to [`Context::elapsed`].
+    ///
+    /// # Errors
+    ///
+    /// See [`crate::exec::run`].
+    pub fn run(&mut self, inv: &Invocation) -> Result<Output, ExecError> {
+        let output = self.runner.run(inv)?;
+        self.elapsed = self.elapsed.saturating_add(output.duration);
+        Ok(output)
+    }
+
+    /// A private directory for intermediate files (reports, databases), created on first use
+    /// and deleted with the context. Never inside the target.
+    ///
+    /// # Errors
+    ///
+    /// When the directory cannot be created.
+    pub fn scratch(&mut self) -> Result<PathBuf, String> {
+        if let Some(dir) = &self.scratch {
+            return Ok(dir.path().to_path_buf());
+        }
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("sast3uh-scan-");
+        let created = match &self.scratch_root {
+            Some(root) => {
+                let _ = std::fs::create_dir_all(root);
+                builder.tempdir_in(root).or_else(|_| builder.tempdir())
+            }
+            None => builder.tempdir(),
+        };
+        let dir = created.map_err(|e| format!("cannot create a scratch directory: {e}"))?;
+        let path = dir.path().to_path_buf();
+        self.scratch = Some(dir);
+        Ok(path)
+    }
+
+    /// One progress line, prefixed with the scanner's name.
+    pub fn log(&mut self, line: impl AsRef<str>) {
+        // Best effort: a closed standard error must not stop a scan.
+        let _ = writeln!(self.log, "{}: {}", self.name, line.as_ref());
+    }
+}
+
+impl std::fmt::Debug for Context<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("name", &self.name)
+            .field("program", &self.program)
+            .field("target", &self.target)
+            .field("timeout", &self.timeout)
+            .field("live", &self.live.is_some())
+            .field("elapsed", &self.elapsed)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A scanner sast3uh can drive.
 pub trait Scanner: Send + Sync {
     /// Display name (also the `tool` field of its findings).
@@ -168,8 +313,16 @@ pub trait Scanner: Send + Sync {
     fn parse_version(&self, output: &Output) -> Option<Version> {
         Version::parse(&output.stdout_text()).or_else(|| Version::parse(&output.stderr_text()))
     }
-    /// Arguments that scan the current directory (the pipeline sets it to the target).
-    fn scan_args(&self, options: &ScanOptions) -> Vec<OsString>;
+    /// Arguments that scan the current directory (the pipeline sets it to the target), for
+    /// a scanner that is one invocation; one that overrides [`Scanner::execute`] has none.
+    fn scan_args(&self, _options: &ScanOptions) -> Vec<OsString> {
+        Vec::new()
+    }
+    /// Parent-environment variables the scanner needs (tokens for an API it calls…). Nothing
+    /// else of the parent's environment ever reaches a scanner.
+    fn inherit_env(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// One line on what the scan will use (rule packs…), for the log.
     fn plan(&self, _options: &ScanOptions) -> Option<String> {
         None
@@ -180,6 +333,15 @@ pub trait Scanner: Send + Sync {
     }
     /// Turn the captured output of a scan into findings.
     fn interpret(&self, output: &Output) -> Outcome;
+    /// Run the scan: one invocation of [`Scanner::scan_args`] read by [`Scanner::interpret`]
+    /// unless the scanner needs several steps.
+    fn execute(&self, ctx: &mut Context<'_>) -> Outcome {
+        let inv = ctx.invocation(self.scan_args(ctx.options), &self.env());
+        match ctx.run(&inv) {
+            Ok(output) => self.interpret(&output),
+            Err(err) => Outcome::Failed(err.to_string()),
+        }
+    }
 }
 
 /// Every scanner, in display order.
@@ -188,8 +350,29 @@ pub fn registry() -> Vec<Box<dyn Scanner>> {
         Box::new(semgrep::Semgrep),
         Box::new(bearer::Bearer),
         Box::new(trivy::Trivy),
+        Box::new(codeql::CodeQl),
+        Box::new(plumber::Plumber),
         Box::new(luacheck::Luacheck),
     ]
+}
+
+/// Read a report a scanner wrote to `path`, at most `max` bytes.
+///
+/// # Errors
+///
+/// When the file is missing, unreadable or larger than `max`.
+pub(crate) fn read_report(path: &Path, max: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut bytes = Vec::new();
+    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    file.take(limit)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes.len() > max {
+        return Err(format!("{}: exceeds the capture limit", path.display()));
+    }
+    Ok(bytes)
 }
 
 /// The scanner names, in display order.
@@ -286,10 +469,15 @@ mod tests {
     #[test]
     fn registry_names_are_unique_and_lookup_is_case_insensitive() {
         let names = names();
-        assert_eq!(names, vec!["semgrep", "bearer", "trivy", "luacheck"]);
+        assert_eq!(
+            names,
+            vec![
+                "semgrep", "bearer", "trivy", "codeql", "plumber", "luacheck"
+            ]
+        );
         assert!(by_name("Semgrep").is_some());
         assert!(by_name(" luacheck ").is_some());
-        assert!(by_name("codeql").is_none());
+        assert!(by_name("gosec").is_none());
         let mut bins: Vec<_> = registry().iter().map(|s| s.binary()).collect();
         bins.sort_unstable();
         bins.dedup();

@@ -72,21 +72,24 @@ impl Scanner for Bearer {
             .or_else(|| Version::parse(&text))
     }
 
-    fn scan_args(&self, _options: &ScanOptions) -> Vec<OsString> {
-        os_args(&[
+    fn scan_args(&self, options: &ScanOptions) -> Vec<OsString> {
+        let mut args = os_args(&[
             "scan",
             ".",
             "--format",
             "json",
-            "--quiet",
             "--exit-code",
             "0",
-            "--hide-progress-bar",
             "--disable-version-check",
-            // The SAST rules plus the secrets scanner: both of Bearer\'s engines.
+            // The SAST rules plus the secrets scanner: both of Bearer's engines.
             "--scanner",
             "sast,secrets",
-        ])
+        ]);
+        if !options.live {
+            // On a terminal Bearer's progress bar on standard error is the progress.
+            args.extend(os_args(&["--quiet", "--hide-progress-bar"]));
+        }
+        args
     }
 
     fn env(&self) -> Vec<(OsString, OsString)> {
@@ -621,5 +624,18 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--exit-code", "0"]));
         assert!(args.contains(&"--disable-version-check".to_owned()));
         assert!(args.windows(2).any(|w| w == ["--scanner", "sast,secrets"]));
+        assert!(args.contains(&"--quiet".to_owned()));
+        assert!(args.contains(&"--hide-progress-bar".to_owned()));
+        let live = ScanOptions {
+            live: true,
+            ..ScanOptions::default()
+        };
+        let live_args = Bearer.scan_args(&live);
+        assert!(
+            !live_args
+                .iter()
+                .any(|a| a == "--quiet" || a == "--hide-progress-bar")
+        );
+        assert!(live_args.iter().any(|a| a == "--disable-version-check"));
     }
 }

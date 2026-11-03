@@ -8,12 +8,16 @@ latest GitHub release and offers to update it.
 
 ## Scanners
 
-| Tool     | Covers                                                            | mise id                     |
-| -------- | ----------------------------------------------------------------- | --------------------------- |
-| semgrep  | SAST, 30+ languages, rule packs (`p/default` by default)          | `semgrep`                   |
-| bearer   | SAST + sensitive data: JS/TS, Python, Go, Java, Ruby, PHP         | `aqua:Bearer/bearer`        |
-| trivy    | SCA (CVEs in lockfiles), IaC misconfigurations, secrets, licenses | `trivy`                     |
-| luacheck | Lua linter: globals, unused, syntax                               | `ubi:lunarmodules/luacheck` |
+| Tool     | Covers                                                                      | mise id                     |
+| -------- | --------------------------------------------------------------------------- | --------------------------- |
+| semgrep  | SAST, 30+ languages, rule packs (`p/default` by default)                    | `semgrep`                   |
+| bearer   | SAST + sensitive data: JS/TS, Python, Go, Java, Ruby, PHP                   | `aqua:Bearer/bearer`        |
+| trivy    | SCA (CVEs in lockfiles), IaC misconfigurations, secrets, licenses           | `trivy`                     |
+| codeql   | GitHub's semantic analysis: JS/TS, Python, Ruby, Java/Kotlin, C#, C/C++,    | `codeql`                    |
+|          | Rust, Go, Swift and GitHub Actions workflows, `security-extended` suites    |                             |
+| plumber  | CI/CD trust policy: GitHub Actions / GitLab CI attack paths, pinning,       | `github:getplumber/plumber` |
+|          | permissions, injections, images                                             |                             |
+| luacheck | Lua linter: globals, unused, syntax                                         | `ubi:lunarmodules/luacheck` |
 
 Scanners are installed and updated through [mise](https://mise.jdx.dev):
 sast3uh resolves each binary with `mise which` (falling back to `PATH`),
@@ -119,12 +123,58 @@ outdated one (`--update ask`, the default; `--update always` to say yes to
 everything, `--offline` for no lookup at all). To install them yourself:
 
 ```bash
-mise use -g semgrep aqua:Bearer/bearer trivy ubi:lunarmodules/luacheck
+mise use -g semgrep aqua:Bearer/bearer trivy codeql github:getplumber/plumber ubi:lunarmodules/luacheck
 sast3uh tools      # installed path, version and latest release of each
 ```
 
 Each scanner is resolved with `mise which` first, then on `PATH`, so a
 mise-managed version always wins over a stray system one.
+
+#### CodeQL, kept light
+
+CodeQL is the heaviest of the scanners and sast3uh keeps it as simple as a
+`mise use -g codeql`: the bare CLI (about 750 MB installed, with its own
+Java runtime — no bundle, no system Java), no database to manage and no
+query to compile.
+
+- For each language found in the target, sast3uh extracts a CodeQL database
+  into a private scratch directory (`~/.cache/sast3uh/sast3uh-scan-*`, never
+  inside the project), runs the language's `security-extended` suite on it
+  and deletes the database as soon as it is analysed.
+- The query packs (`codeql/<language>-queries`, precompiled, a few tens of
+  MB each) are downloaded by CodeQL itself the first time a language is
+  analysed, into `~/.codeql/packages`; later scans reuse them. Under
+  `--offline` nothing is downloaded: a missing pack is reported for that
+  language and the others still run.
+- Interpreted languages (JavaScript/TypeScript, Python, Ruby) and GitHub
+  Actions workflows need nothing else. Java/Kotlin, C#, C/C++ and Rust are
+  extracted without building (`--build-mode=none`). Go and Swift need their
+  toolchain on `PATH` (`autobuild`). A language that cannot be extracted is
+  a diagnostic in the report, not a failed scan.
+- Each `codeql` step gets the full `--timeout`; a large project can take
+  several minutes per language, and the live progress (below) shows what
+  CodeQL is doing.
+
+The CodeQL CLI is free for open-source projects and academic research; using
+it on other code needs a GitHub Advanced Security licence — see
+[GitHub's terms](https://github.com/github/codeql-cli-binaries/blob/main/LICENSE.md).
+CodeQL has no Linux ARM build at the time of writing (x86-64 Linux, macOS
+and Windows only).
+
+#### Plumber, on the clone's pipeline
+
+Plumber runs when the target has `.github/workflows` or a `.gitlab-ci.yml`,
+and needs a git clone whose `origin` remote names GitHub or GitLab;
+otherwise it is skipped (not failed). It analyses the workflows locally:
+every issue (unpinned action, excessive permissions, template injection,
+`pull_request_target` checkouts, unverified scripts, mutable images…) and
+every attack path it builds becomes a finding, with the Plumber Score as a
+diagnostic. Repository settings (branch protection) need a provider token:
+with `GH_TOKEN` / `GITHUB_TOKEN` / `GH_ENTERPRISE_TOKEN` / `GITLAB_TOKEN` in
+the environment that control runs too — those four variables are the only
+thing of your environment Plumber sees, and no other scanner ever sees them.
+Without a token the control is skipped on purpose, otherwise Plumber withholds
+its score and every severity.
 
 ## Rule packs: exhaustive by default
 
@@ -155,6 +205,9 @@ four of its scanners (`vuln,misconfig,secret,license`), dev dependencies
 included, with comprehensive detection and license reading from file headers
 in the exhaustive profile, and cached databases only under `--offline`;
 Luacheck runs with `std = max` and honours the project's `.luacheckrc`.
+CodeQL runs `database create` (no build where CodeQL allows it) then
+`database analyze` with `codeql/<language>-queries:codeql-suites/<language>-security-extended.qls`
+per language; Plumber runs `analyze --min-points 0` with every control.
 
 ## What a finding carries
 
@@ -177,7 +230,7 @@ sast3uh packs [DIR]               # languages found and Semgrep packs selected
 
   -f, --format <text|json|yaml|xml|html>   guessed from --output's extension
   -o, --output <FILE>                      atomic write; stdout otherwise
-  -t, --tools <semgrep,bearer,luacheck>    subset, registry order
+  -t, --tools <semgrep,bearer,trivy,codeql,plumber,luacheck>  subset, registry order
       --semgrep-config <CONFIG>            repeatable (p/rust, rules.yml…); replaces the selection
       --semgrep-profile <exhaustive|security>  how many packs the selection takes (default: exhaustive)
       --fail-on <severity>                 exit 1 at or above (default: info)
@@ -190,6 +243,12 @@ sast3uh packs [DIR]               # languages found and Semgrep packs selected
 Exit codes: `0` clean · `1` findings at or above `--fail-on` · `2` usage
 error · `3` could not run or a scanner failed (the report is still written).
 
+On a terminal the scanners show their own progress: their standard error is
+echoed as it comes (Bearer's progress bar, Semgrep's status, CodeQL's query
+counter…) and a `<tool>: still running (1m02s)` line appears after 15
+seconds of silence, so a long scan is never a blank screen. Through a pipe
+or in CI the scanners run quiet and only sast3uh's own lines are printed.
+
 The install/update prompt only appears on a terminal; a non-interactive run
 (CI, a pipe) never changes the machine and prints the `mise use` command to
 run instead. `--update always` is the explicit opt-in; `--update never`
@@ -199,7 +258,9 @@ only reports. Without mise on `PATH` there is no version check at all.
 
 - Every scanner is spawned with an argument list (never a shell), an
   environment reduced to `PATH`/`HOME`/locale, the target as working
-  directory, a timeout and a cap on captured output.
+  directory, a timeout and a cap on captured output. Intermediate files
+  (CodeQL databases, Plumber's report) live in a private scratch directory
+  deleted after the run, never in the scanned project.
 - Scanner output is untrusted: parsed into typed structs, paths that could
   escape the target are dropped, a malformed report fails that tool only.
 - XML and HTML reports escape every value; the HTML page carries a
@@ -207,7 +268,8 @@ only reports. Without mise on `PATH` there is no version check at all.
   `http(s)` URLs.
 - No network code: version lookups and installs are mise's job (its aqua
   backend verifies checksums), and mise is the only child that sees the
-  `MISE_*` / `GITHUB_TOKEN` variables.
+  `MISE_*` / `GITHUB_TOKEN` variables — Plumber excepted, which receives
+  the provider token it is documented to read, and nothing else.
 
 ## Development
 
