@@ -35,6 +35,9 @@ pub enum Command {
 
 /// Arguments of `scan`.
 #[derive(Debug, Args)]
+// Command-line switches are booleans by nature; grouping them into enums would only make
+// the `--help` worse.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ScanArgs {
     /// Directory to scan.
     #[arg(default_value = ".", value_name = "DIR")]
@@ -92,6 +95,12 @@ pub struct ScanArgs {
     /// and report them all.
     #[arg(long, value_enum, default_value_t = Suppressions::Honour)]
     pub suppressions: Suppressions,
+
+    /// Trivy: also classify the license of every source file header (off by default: a
+    /// project's own license, GPL for one, is "restricted" in Trivy's policy and would be
+    /// reported on each of its files).
+    #[arg(long)]
+    pub license_full: bool,
 }
 
 /// Arguments of `packs`.
@@ -143,6 +152,7 @@ mod tests {
         assert!(!args.no_dedup);
         assert!(!args.comments);
         assert_eq!(args.suppressions, Suppressions::Honour);
+        assert!(!args.license_full);
     }
 
     #[test]

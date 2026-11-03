@@ -38,6 +38,8 @@ pub struct ScanOptions {
     pub live: bool,
     /// What to do with the inline comments that silence the tool.
     pub suppressions: crate::sweep::Suppressions,
+    /// Trivy: classify the license of every file header, not only of packages.
+    pub license_full: bool,
 }
 
 impl Default for ScanOptions {
@@ -49,6 +51,7 @@ impl Default for ScanOptions {
             offline: false,
             live: false,
             suppressions: crate::sweep::Suppressions::Honour,
+            license_full: false,
         }
     }
 }
@@ -187,6 +190,9 @@ pub struct Context<'a> {
     pub heartbeat: Option<Duration>,
     /// Parent-environment variables this scanner may see (see [`Scanner::inherit_env`]).
     pub inherited: Vec<(OsString, OsString)>,
+    /// The `PATH` every invocation runs with (the binary's own directory first); the
+    /// process's own when `None`.
+    pub path: Option<OsString>,
     /// Progress log (standard error in the CLI).
     pub log: &'a mut dyn Write,
     /// Where the scratch directory is created; the system temporary directory when `None`.
@@ -218,6 +224,7 @@ impl<'a> Context<'a> {
             live: None,
             heartbeat: None,
             inherited: Vec::new(),
+            path: None,
             log,
             scratch_root: None,
             elapsed: Duration::ZERO,
@@ -234,6 +241,9 @@ impl<'a> Context<'a> {
             .cwd(self.target)
             .timeout(self.timeout)
             .max_output(self.max_output);
+        if let Some(path) = &self.path {
+            inv = inv.env("PATH", path.clone());
+        }
         for (key, value) in self.inherited.iter().chain(env.iter()) {
             inv = inv.env(key.clone(), value.clone());
         }

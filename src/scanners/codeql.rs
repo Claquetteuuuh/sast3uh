@@ -174,8 +174,10 @@ impl CodeQl {
                 });
                 return Ok(());
             }
+            let logs = log_tail(&db);
+            let _ = std::fs::remove_dir_all(&db);
             return Err(format!(
-                "{language}: database creation failed: {}",
+                "{language}: database creation failed: {}{logs}",
                 failure_reason(&created)
             ));
         }
@@ -231,6 +233,58 @@ impl CodeQl {
                 ctx.run(&inv).is_ok_and(|out| out.success())
             })
             .collect()
+    }
+}
+
+/// The last lines of every `CodeQL` log under `db/log` (the extractor's errors end up there,
+/// not on standard error), for a failure message.
+fn log_tail(db: &Path) -> String {
+    let mut logs: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack = vec![db.join("log")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "log") {
+                logs.push(path);
+            }
+        }
+    }
+    logs.sort();
+    let mut out = String::new();
+    for path in logs {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let lines: Vec<&str> = text
+            .lines()
+            .rev()
+            .take(15)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let interesting = lines.iter().any(|l| {
+            let lower = l.to_ascii_lowercase();
+            lower.contains("error") || lower.contains("exception") || lower.contains("fatal")
+        });
+        if !interesting {
+            continue;
+        }
+        let name = path.strip_prefix(db).unwrap_or(&path).display().to_string();
+        out.push_str("\n--- ");
+        out.push_str(&name);
+        out.push_str(" ---\n");
+        out.push_str(&lines.join("\n"));
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("; CodeQL logs:{}", cap(&out, TEXT_CAP))
     }
 }
 
@@ -1425,7 +1479,27 @@ mod tests {
 
     #[test]
     fn a_failed_extraction_fails_the_scan_when_nothing_else_ran() {
-        let runner = fake_codeql(PYTHON, 1, "ERROR: the extractor crashed");
+        let runner = FakeRunner::new(|inv: &crate::exec::Invocation| {
+            let args: Vec<String> = inv
+                .args
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(args.get(1).map(String::as_str), Some("create"));
+            let db = PathBuf::from(&args[2]);
+            std::fs::create_dir_all(db.join("log/ext")).unwrap();
+            std::fs::write(
+                db.join("log/database-create-1.log"),
+                "[1] Starting\n[2] all fine\n",
+            )
+            .unwrap();
+            std::fs::write(
+                db.join("log/ext/javascript.log"),
+                "Extracting a.js\nERROR: java.lang.OutOfMemoryError: Java heap space\n",
+            )
+            .unwrap();
+            Ok(output(Some(1), b"", "ERROR: the extractor crashed"))
+        });
         let options = options_for(&[Language::Python]);
         let mut log = Vec::new();
         let dir = tempfile::tempdir().unwrap();
@@ -1438,10 +1512,21 @@ mod tests {
             &mut log,
         );
         match CodeQl.execute(&mut ctx) {
-            Outcome::Failed(reason) => assert!(
-                reason.contains("python: database creation failed") && reason.contains("crashed"),
-                "{reason}"
-            ),
+            Outcome::Failed(reason) => {
+                assert!(
+                    reason.contains("python: database creation failed")
+                        && reason.contains("crashed"),
+                    "{reason}"
+                );
+                assert!(
+                    reason.contains("CodeQL logs:") && reason.contains("OutOfMemoryError"),
+                    "{reason}"
+                );
+                assert!(
+                    !reason.contains("all fine"),
+                    "quiet logs are left out: {reason}"
+                );
+            }
             other => panic!("{other:?}"),
         }
         let none = ScanOptions::default();

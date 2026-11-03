@@ -227,8 +227,10 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
   only — selecting by language is what keeps a scan fast.
 - Bearer runs `--scanner sast,secrets`; Trivy runs `fs --scanners
   vuln,misconfig,secret,license --include-dev-deps` (plus
-  `--detection-priority comprehensive --license-full` in the exhaustive
-  profile, and `--skip-db-update --skip-java-db-update --skip-check-update
+    `--detection-priority comprehensive` in the exhaustive profile,
+  `--license-full` only with the flag of that name — a project's own GPL
+  headers are "restricted" in Trivy's policy, one high finding per file —
+  and `--skip-db-update --skip-java-db-update --skip-check-update
   --offline-scan` under `--offline`); Luacheck runs with the default
   `std = max` and the project's `.luacheckrc`; CodeQL runs `database create`
   per detected language (`--build-mode=none` for Java/Kotlin, C#, C/C++,

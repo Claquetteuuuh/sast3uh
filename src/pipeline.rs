@@ -282,6 +282,7 @@ fn run_one(
         );
         ctx.timeout = options.timeout;
         ctx.max_output = options.max_output;
+        ctx.path = Some(child_path(&ctx.program, deps.path_var));
         ctx.inherited = inherited;
         ctx.scratch_root = scratch_root();
         if options.live {
@@ -347,28 +348,28 @@ fn refresh(
     deps: &mut Deps<'_>,
 ) -> (PathBuf, Option<Version>) {
     let name = scanner.name();
-    let installed = installed_version(scanner, &path, deps.runner);
-    match installed {
-        Some(v) => deps.log(format!("{name} {v} ({})", path.display())),
-        None => deps.log(format!(
-            "{name}: cannot read its version ({})",
+    let installed = installed_version(scanner, &path, deps.runner, deps.path_var);
+    match &installed {
+        Ok(v) => deps.log(format!("{name} {v} ({})", path.display())),
+        Err(reason) => deps.log(format!(
+            "{name}: cannot read its version ({}): {reason}",
             path.display()
         )),
     }
-    let Some(current) = installed else {
+    let Ok(current) = installed else {
         return (path, None);
     };
     if !offer_update(scanner, current, options, deps) {
-        return (path, installed);
+        return (path, Some(current));
     }
     // mise may have switched the global version to a new install directory.
     let path = locate(scanner, deps).unwrap_or(path);
-    let now = installed_version(scanner, &path, deps.runner);
+    let now = installed_version(scanner, &path, deps.runner, deps.path_var).ok();
     match now {
         Some(v) => deps.log(format!("{name}: now {v} ({})", path.display())),
         None => deps.log(format!("{name}: updated, version unreadable")),
     }
-    (path, now.or(installed))
+    (path, now.or(Some(current)))
 }
 
 /// sast3uh's own passes over the target (one walk for both), reported like scanners.
@@ -468,15 +469,43 @@ fn failed(name: &str, version: Option<String>, reason: String, duration_ms: u64)
     }
 }
 
-fn installed_version(scanner: &dyn Scanner, path: &Path, runner: &dyn Runner) -> Option<Version> {
+/// The version the binary at `path` reports, read only from a successful version command:
+/// a failing one (a broken install printing mise's own error, say) must not pass for a
+/// version. `path_var` is the `PATH` the scanner gets (see [`child_path`]).
+fn installed_version(
+    scanner: &dyn Scanner,
+    path: &Path,
+    runner: &dyn Runner,
+    path_var: Option<&OsStr>,
+) -> Result<Version, String> {
     let inv = Invocation::new(path)
         .args(scanner.version_args())
+        .env("PATH", child_path(path, path_var))
         .timeout(Duration::from_secs(30))
         .max_output(64 * 1024);
-    runner
-        .run(&inv)
-        .ok()
-        .and_then(|output| scanner.parse_version(&output))
+    let output = runner.run(&inv).map_err(|e| e.to_string())?;
+    if !output.success() {
+        return Err(scanners::failure_reason_pub(&output));
+    }
+    scanner
+        .parse_version(&output)
+        .ok_or_else(|| "no version in its output".to_owned())
+}
+
+/// The `PATH` a scanner runs with: its own directory first, then the user's. A tool that
+/// execs a sibling binary (Semgrep's `osemgrep`) then finds the real file, not a mise shim
+/// that may not resolve outside the user's shell.
+fn child_path(program: &Path, path_var: Option<&OsStr>) -> OsString {
+    let own = program.parent().map(Path::to_path_buf);
+    let rest = path_var.map(std::env::split_paths).into_iter().flatten();
+    let all: Vec<PathBuf> = own.into_iter().chain(rest).fold(Vec::new(), |mut acc, p| {
+        if !acc.contains(&p) {
+            acc.push(p);
+        }
+        acc
+    });
+    std::env::join_paths(all)
+        .unwrap_or_else(|_| path_var.map(OsStr::to_os_string).unwrap_or_default())
 }
 
 /// The mise id to install `scanner` with: what mise already manages, else the adapter's default.
@@ -646,9 +675,9 @@ pub fn inventory(deps: &mut Deps<'_>) -> Vec<ToolInfo> {
         .iter()
         .map(|scanner| {
             let path = locate(scanner.as_ref(), deps);
-            let installed = path
-                .as_deref()
-                .and_then(|p| installed_version(scanner.as_ref(), p, deps.runner));
+            let installed = path.as_deref().and_then(|p| {
+                installed_version(scanner.as_ref(), p, deps.runner, deps.path_var).ok()
+            });
             let (mise_id, latest, note) = match (&deps.mise, deps.online) {
                 (None, _) => (
                     scanner.mise_id().to_owned(),
@@ -923,6 +952,7 @@ mod tests {
                 .env
                 .iter()
                 .map(|(k, _)| k.to_string_lossy().into_owned())
+                .filter(|k| k != "PATH")
                 .collect();
             if tool_of(&inv) == "plumber" {
                 assert!(
@@ -1033,6 +1063,89 @@ mod tests {
             names,
             vec!["luacheck", "suppressions"],
             "ignore reports the comments too"
+        );
+    }
+
+    #[test]
+    fn a_scanner_runs_with_its_own_directory_first_on_path() {
+        let joined =
+            std::env::join_paths([Path::new("/usr/bin"), Path::new("/opt/tool/bin")]).unwrap();
+        let path = child_path(Path::new("/opt/tool/bin/tool"), Some(&joined));
+        let parts: Vec<PathBuf> = std::env::split_paths(&path).collect();
+        assert_eq!(
+            parts,
+            vec![PathBuf::from("/opt/tool/bin"), PathBuf::from("/usr/bin")],
+            "own directory first, once"
+        );
+        let alone = child_path(Path::new("/opt/tool/bin/tool"), None);
+        assert_eq!(
+            std::env::split_paths(&alone).collect::<Vec<_>>(),
+            vec![PathBuf::from("/opt/tool/bin")]
+        );
+
+        let (dir, path_var) = stub_path(&["semgrep"]);
+        let target = tempfile::tempdir().unwrap();
+        let runner = FakeRunner::new(scripted);
+        let mut prompter = FixedAnswer(false);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        scan(target.path(), &Options::default(), &mut deps).unwrap();
+        for inv in runner.calls() {
+            let path = inv
+                .env
+                .iter()
+                .find(|(k, _)| k == "PATH")
+                .map(|(_, v)| v.clone())
+                .expect("every invocation sets PATH");
+            let first = std::env::split_paths(&path).next().unwrap();
+            assert_eq!(first, dir.path(), "{inv:?}");
+        }
+    }
+
+    #[test]
+    fn a_failing_version_command_is_not_a_version() {
+        let (_dir, path_var) = stub_path(&["semgrep", "luacheck"]);
+        let target = tempfile::tempdir().unwrap();
+        let runner = FakeRunner::new(|inv: &Invocation| {
+            if tool_of(inv) == "semgrep" && is_version_call(inv) {
+                // A dangling mise shim: the error carries mise's own version string.
+                return Ok(output(
+                    Some(1),
+                    b"",
+                    "mise ERROR osemgrep is not a valid shim. This likely means you uninstalled a tool\nmise ERROR Version: 2026.10.25 linux-x64 (2026-10-31)\n",
+                ));
+            }
+            scripted(inv)
+        });
+        let mut prompter = FixedAnswer(false);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let report = scan(target.path(), &Options::default(), &mut deps).unwrap();
+        let semgrep = report.tools.iter().find(|t| t.tool == "semgrep").unwrap();
+        assert_eq!(semgrep.version, None, "2026.10.25 is mise's, not Semgrep's");
+        assert_eq!(
+            semgrep.status,
+            ToolStatus::Completed,
+            "the scan itself still runs"
+        );
+        let text = String::from_utf8(log).unwrap();
+        assert!(
+            text.contains("semgrep: cannot read its version") && text.contains("not a valid shim"),
+            "{text}"
         );
     }
 

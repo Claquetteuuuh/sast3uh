@@ -202,8 +202,10 @@ finding.
 
 Bearer runs both of its engines (`--scanner sast,secrets`); Trivy runs all
 four of its scanners (`vuln,misconfig,secret,license`), dev dependencies
-included, with comprehensive detection and license reading from file headers
-in the exhaustive profile, and cached databases only under `--offline`;
+included, with comprehensive detection in the exhaustive profile, cached
+databases only under `--offline`, and the license of every file header only
+with `--license-full` (off by default: Trivy's policy calls GPL "restricted",
+so a GPL project would get one high finding per file of its own);
 Luacheck runs with `std = max` and honours the project's `.luacheckrc`.
 CodeQL runs `database create` (no build where CodeQL allows it) then
 `database analyze` with `codeql/<language>-queries:codeql-suites/<language>-security-extended.qls`
@@ -278,6 +280,7 @@ sast3uh packs [DIR]               # languages found and Semgrep packs selected
       --update <ask|always|never>          when a scanner is behind (default: ask)
       --offline                            no GitHub lookup at all
             --no-dedup                           keep every finding
+            --license-full                       Trivy: classify the license of every file header too
       --comments                           also report TODO / FIXME / HACK / XXX / bypass… comments
       --suppressions <honour|report|ignore>  what to do with nosemgrep, bearer:disable… comments (default: honour)
 ```

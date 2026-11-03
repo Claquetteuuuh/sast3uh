@@ -65,13 +65,14 @@ impl Scanner for Trivy {
             args.extend(os_args(&["--quiet", "--no-progress"]));
         }
         if options.semgrep_profile == Profile::Exhaustive {
-            // More detections at the cost of precision, and licenses read from file
-            // headers, not only from package metadata.
-            args.extend(os_args(&[
-                "--detection-priority",
-                "comprehensive",
-                "--license-full",
-            ]));
+            // More detections at the cost of precision.
+            args.extend(os_args(&["--detection-priority", "comprehensive"]));
+        }
+        if options.license_full {
+            // Licenses read from every file header, not only from package metadata: opt-in,
+            // because Trivy then flags the project's own license (GPL is "restricted" in its
+            // default policy) on each of its files.
+            args.push("--license-full".into());
         }
         if options.offline {
             args.extend(os_args(&[
@@ -95,7 +96,10 @@ impl Scanner for Trivy {
     fn plan(&self, options: &ScanOptions) -> Option<String> {
         let mut parts = vec!["vuln, misconfig, secret and license scanners".to_owned()];
         if options.semgrep_profile == Profile::Exhaustive {
-            parts.push("comprehensive detection, licenses from file headers".to_owned());
+            parts.push("comprehensive detection".to_owned());
+        }
+        if options.license_full {
+            parts.push("licenses from every file header".to_owned());
         }
         if options.offline {
             parts.push("offline: cached databases only".to_owned());
@@ -961,7 +965,21 @@ mod tests {
             args.windows(2)
                 .any(|w| w == ["--detection-priority", "comprehensive"])
         );
-        assert!(args.contains(&"--license-full".to_owned()));
+        assert!(
+            !args.contains(&"--license-full".to_owned()),
+            "file-header licenses are opt-in"
+        );
+        let full = ScanOptions {
+            license_full: true,
+            ..ScanOptions::default()
+        };
+        let full_args: Vec<String> = Trivy
+            .scan_args(&full)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(full_args.contains(&"--license-full".to_owned()));
+        assert!(Trivy.plan(&full).unwrap().contains("every file header"));
         assert!(!args.contains(&"--skip-db-update".to_owned()));
         assert_eq!(args.last().map(String::as_str), Some("."));
         assert!(args.contains(&"--quiet".to_owned()));
