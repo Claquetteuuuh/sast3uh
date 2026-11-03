@@ -37,10 +37,20 @@ scan.
 straight from the GitHub release and keeps it updated:
 
 ```bash
-mise use -g github:Claquetteuuuh/sasteuuuh@0.1.0   # a pinned version, on your PATH
+mise use -g github:Claquetteuuuh/sasteuuuh@0.1.0   # a pinned version
 mise use -g github:Claquetteuuuh/sasteuuuh         # the newest release that is 24 h old
 sasteuuuh --version
 ```
+
+`sasteuuuh` is on your `PATH` only when mise is activated in your shell —
+`mise doctor` must say `activated: yes` (or `shims_on_path: yes`). If it
+does not, add mise's hook to your shell once and open a new terminal:
+
+```bash
+echo 'eval "$(mise activate zsh)"' >> ~/.zshrc     # bash: mise activate bash >> ~/.bashrc
+```
+
+Until then, `mise exec -- sasteuuuh --version` runs the installed binary.
 
 mise hides a release younger than its `minimum_release_age` (24 h by
 default) from `@latest`: the day a version comes out, `mise use` without a
