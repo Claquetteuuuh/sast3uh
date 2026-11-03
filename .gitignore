@@ -30,3 +30,6 @@ Thumbs.db
 .claude/worktrees/
 # Machine-local Claude Code settings (absolute paths, personal overrides)
 .claude/settings.local.json
+
+# Recorded scanner output is a test fixture, whatever its extension.
+!tests/fixtures/**
