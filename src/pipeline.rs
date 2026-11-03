@@ -18,6 +18,7 @@ use crate::scanners::Context;
 use crate::scanners::{self, Outcome, ScanOptions, Scanner};
 use crate::sweep::{self, Suppressions};
 use crate::tools::find_in_path;
+use crate::triage::{self, Triage};
 use crate::update::{Mise, UpdatePlan};
 use crate::version::Version;
 
@@ -54,6 +55,8 @@ pub struct Options {
     pub comments: bool,
     /// What to do with the inline comments that silence a scanner.
     pub suppressions: Suppressions,
+    /// What is set aside (confidence floor, corroboration, baseline, ignore file).
+    pub triage: Triage,
 }
 
 /// Silence after which a live run prints a `still running` line.
@@ -71,6 +74,7 @@ impl Default for Options {
             live: false,
             comments: false,
             suppressions: Suppressions::Honour,
+            triage: Triage::default(),
         }
     }
 }
@@ -227,7 +231,7 @@ pub fn scan(
         }
     }
 
-    let (findings, removed) = if options.dedup {
+    let (mut findings, removed) = if options.dedup {
         let result = dedup::dedup(findings);
         (result.findings, result.removed)
     } else {
@@ -235,6 +239,19 @@ pub fn scan(
         dedup::sort(&mut findings);
         (findings, 0)
     };
+    let mut triage = options.triage.clone();
+    triage.states_confidence = scanners
+        .iter()
+        .filter(|s| s.states_confidence())
+        .map(|s| s.name().to_owned())
+        .collect();
+    triage::apply(&mut findings, &triage);
+    let filtered = findings.iter().filter(|f| f.filtered.is_some()).count();
+    if filtered > 0 {
+        deps.log(format!(
+            "{filtered} finding(s) set aside by the triage (still in the report, out of the counts)"
+        ));
+    }
     Ok(Report::new(
         target,
         crate::timefmt::now_rfc3339(),
@@ -1220,8 +1237,30 @@ mod tests {
         );
         assert_eq!(
             report.summary.total,
-            18 + 24,
-            "trivy's files overlap with nobody's"
+            18 + 24 - 1,
+            "trivy's files overlap with nobody's; one low-confidence Semgrep finding that no \
+             other tool corroborates is set aside"
+        );
+        assert_eq!(report.summary.filtered, 1);
+        assert_eq!(report.findings.len(), 42, "set aside, not dropped");
+        let aside = report
+            .findings
+            .iter()
+            .find(|f| f.filtered.is_some())
+            .unwrap();
+        assert_eq!(aside.tool, "semgrep");
+        assert_eq!(
+            aside.filtered.as_deref(),
+            Some("confidence low below medium")
+        );
+        assert!(aside.also_reported_by.is_empty());
+        assert!(
+            report
+                .findings
+                .iter()
+                .filter(|f| !f.also_reported_by.is_empty())
+                .all(|f| f.filtered.is_none()),
+            "a corroborated finding is never set aside"
         );
         assert_eq!(
             report.tools[0].scanned_files,
@@ -1583,7 +1622,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.summary.duplicates_removed, 0);
-        assert_eq!(report.summary.total, 16);
+        assert_eq!(report.summary.total, 12);
+        assert_eq!(
+            report.summary.filtered, 4,
+            "the four low-confidence Semgrep findings are set aside, not dropped"
+        );
+        assert_eq!(report.findings.len(), 16);
     }
 
     #[test]

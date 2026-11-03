@@ -174,9 +174,19 @@ fn merge_into(existing: &mut Finding, other: Finding) {
 
 /// Worst first, then by file, line, column, tool and rule.
 pub fn sort(findings: &mut [Finding]) {
+    // Within a severity, the strongest signal first: corroborated by another tool, then a
+    // data flow to show, then the scanner's confidence (unknown counts as medium).
+    let confidence = |f: &Finding| f.confidence.unwrap_or(crate::model::Confidence::Medium);
     findings.sort_by(|a, b| {
         b.severity
             .cmp(&a.severity)
+            .then_with(|| {
+                a.also_reported_by
+                    .is_empty()
+                    .cmp(&b.also_reported_by.is_empty())
+            })
+            .then_with(|| a.flow.is_empty().cmp(&b.flow.is_empty()))
+            .then_with(|| confidence(b).cmp(&confidence(a)))
             .then_with(|| a.path.cmp(&b.path))
             .then_with(|| a.line.cmp(&b.line))
             .then_with(|| a.column.cmp(&b.column))
@@ -214,6 +224,38 @@ mod tests {
         let result = dedup(vec![a.clone(), b, a]);
         assert_eq!(result.findings.len(), 2);
         assert_eq!(result.removed, 1);
+    }
+
+    #[test]
+    fn sort_puts_the_strongest_signal_first_within_a_severity() {
+        let plain = finding("semgrep", "r", Severity::High, "z.js", 1);
+        let mut corroborated = finding("semgrep", "r", Severity::High, "y.js", 1);
+        corroborated.also_reported_by.push("bearer".to_owned());
+        let mut flowing = finding("semgrep", "r", Severity::High, "x.js", 1);
+        flowing.flow.push(crate::model::FlowStep {
+            kind: crate::model::FlowKind::Sink,
+            path: "x.js".into(),
+            line: Some(1),
+            column: None,
+            end_line: None,
+            end_column: None,
+            content: None,
+        });
+        let mut sure = finding("semgrep", "r", Severity::High, "w.js", 1);
+        sure.confidence = Some(crate::model::Confidence::High);
+        let mut unsure = finding("semgrep", "r", Severity::High, "a.js", 1);
+        unsure.confidence = Some(crate::model::Confidence::Low);
+        let low = finding("semgrep", "r", Severity::Low, "a.js", 1);
+        let mut all = vec![
+            low.clone(),
+            unsure.clone(),
+            plain.clone(),
+            sure.clone(),
+            flowing.clone(),
+            corroborated.clone(),
+        ];
+        sort(&mut all);
+        assert_eq!(all, vec![corroborated, flowing, sure, plain, unsure, low]);
     }
 
     #[test]

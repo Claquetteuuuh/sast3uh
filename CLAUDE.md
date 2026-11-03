@@ -48,7 +48,9 @@ sast3uh/
 │   ├── packs.rs         # measured Semgrep pack catalogue, selection by language/profile
 │   ├── exec.rs          # THE process boundary: argv list, scrubbed env, cwd, timeout, cap
 │   ├── update.rs        # mise front-end: which / latest / ls --json / use -g, UpdatePlan
-│   ├── dedup.rs         # exact + cross-tool (path, line, CWE) merge, sort worst first
+│   ├── dedup.rs         # exact + cross-tool (path, line, CWE) merge, sort worst then strongest first
+│   ├── triage.rs        # set findings aside (never drop): confidence floor, --corroborated,
+│   │                    # --with-flow, --baseline, --ignore-file; identities; `sast3uh ignore`
 │   ├── model.rs         # Severity, Finding, ToolRun, Summary, Report, path normalisation
 │   ├── output/          # text, json, yaml, xml, html renderers + atomic file write
 │   ├── version.rs       # loose semver parse/compare
@@ -204,13 +206,21 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
   redacted (`sk_live_<redacted-in-fixture>`): GitHub push protection blocks a
   push that carries a key-shaped string, fake or not.
 - **Suppressed findings** (`nosemgrep`…) stay in the report flagged
-  `suppressed`, out of the counts and of the exit code.
+  `suppressed`, out of the counts and of the exit code. **Set-aside
+  findings** (`src/triage.rs`: below `--min-confidence`, not corroborated
+  under `--corroborated`, no flow under `--with-flow`, in the baseline, in
+  the ignore file) stay too, with the reason in `filtered`, counted in
+  `summary.filtered`; a corroborated finding is never set aside. Nothing is
+  ever dropped: noise is a question of what is counted and shown first.
 - **Deduplication merges, it never discards**: the merged finding keeps the
   union of every list, fills what it lacked, and files the other tool's own
   fields under `tool:field` in `extra`.
 
 ## Rule packs (what the scanners are given)
 
+- The default profile is `security`; `exhaustive` is the opt-in (measured on
+  GLPI: 1 915 Semgrep findings under exhaustive, two thirds rated low
+  confidence by Semgrep itself).
 - `src/packs.rs` is the Semgrep catalogue: every official registry pack that
   is not empty for the OSS engine, not meta/test, not a strict subset of a
   listed pack, not style-only — each with the languages or markers

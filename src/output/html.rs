@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::io::Write;
 
-use crate::model::{Report, Severity, ToolStatus};
+use crate::model::{Finding, Report, Severity, ToolStatus};
 use crate::output::{escape, safe_href};
 
 const STYLE: &str = r"
@@ -27,7 +27,10 @@ code { font: 12px/1.4 ui-monospace, monospace; word-break: break-all; }
 .chip { display: inline-block; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; margin: 2px 4px 2px 0; font-size: 12px; color: var(--muted); }
 pre { margin: 6px 0 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; overflow-x: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
 ol.flow { margin: 6px 0 0; padding-left: 20px; }
-tr.suppressed td { opacity: 0.55; }
+tr.suppressed td, tr.filtered td { opacity: 0.55; }
+details.group { margin: 0.5em 0; }
+details.group > summary { cursor: pointer; }
+h3.sev { margin-top: 1.2em; }
 details { margin: 4px 0; } summary { cursor: pointer; color: var(--muted); }
 .refs a { margin-right: 8px; }
 @media (max-width: 700px) { th.opt, td.opt { display: none; } }
@@ -161,118 +164,239 @@ fn location_of(path: &std::path::Path, line: Option<u32>, column: Option<u32>) -
 
 fn write_findings(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
     writeln!(out, "<h2>Findings ({})</h2>", report.summary.total)?;
+    let active: Vec<&Finding> = report.findings.iter().filter(|f| f.is_active()).collect();
+    let groups = crate::output::text::groups(&active);
+    let mut current: Option<Severity> = None;
+    let mut table_open = false;
+    for group in &groups {
+        let Some(first) = group.first() else {
+            continue;
+        };
+        if current != Some(first.severity) {
+            if table_open {
+                writeln!(out, "</tbody></table>")?;
+                table_open = false;
+            }
+            current = Some(first.severity);
+            writeln!(
+                out,
+                r#"<h3 class="sev {sev}">{sev} ({})</h3>"#,
+                report.summary.count(first.severity),
+                sev = first.severity
+            )?;
+        }
+        if group.len() >= GROUP_MIN {
+            if table_open {
+                writeln!(out, "</tbody></table>")?;
+                table_open = false;
+            }
+            let open = if first.severity >= Severity::High {
+                " open"
+            } else {
+                ""
+            };
+            writeln!(
+                out,
+                r#"<details class="group"{open}><summary><span class="sev {sev}">{sev}</span> {} <code>{}</code> {} — {} findings</summary>"#,
+                escape(&first.tool),
+                escape(&first.rule_id),
+                escape(&first.title),
+                group.len(),
+                sev = first.severity
+            )?;
+            write_table_head(out)?;
+            for f in group {
+                write_row(f, out)?;
+            }
+            writeln!(out, "</tbody></table></details>")?;
+            continue;
+        }
+        if !table_open {
+            write_table_head(out)?;
+            table_open = true;
+        }
+        for f in group {
+            write_row(f, out)?;
+        }
+    }
+    if table_open {
+        writeln!(out, "</tbody></table>")?;
+    }
+    let suppressed: Vec<&Finding> = report.findings.iter().filter(|f| f.suppressed).collect();
+    if !suppressed.is_empty() {
+        writeln!(
+            out,
+            "<details><summary>Suppressed by the scanners ({})</summary>",
+            suppressed.len()
+        )?;
+        write_table_head(out)?;
+        for f in suppressed {
+            write_row(f, out)?;
+        }
+        writeln!(out, "</tbody></table></details>")?;
+    }
+    let filtered: Vec<&Finding> = report
+        .findings
+        .iter()
+        .filter(|f| !f.suppressed && f.filtered.is_some())
+        .collect();
+    if !filtered.is_empty() {
+        writeln!(
+            out,
+            "<details><summary>Set aside by the triage ({}, not counted)</summary>",
+            filtered.len()
+        )?;
+        write_table_head(out)?;
+        for f in filtered {
+            write_row(f, out)?;
+        }
+        writeln!(out, "</tbody></table></details>")?;
+    }
+    Ok(())
+}
+
+/// A rule with at least this many findings of one severity gets its own collapsible block.
+const GROUP_MIN: usize = 3;
+
+fn write_table_head(out: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         out,
         "<table><thead><tr><th>Severity</th><th>Location</th><th>Tool</th><th>Rule</th><th class=\"opt\">CWE</th></tr></thead><tbody>"
-    )?;
-    for f in &report.findings {
-        let tools = if f.also_reported_by.is_empty() {
-            escape(&f.tool)
-        } else {
-            format!(
-                "{} <span class=\"msg\">(+{})</span>",
-                escape(&f.tool),
-                escape(&f.also_reported_by.join(", "))
-            )
-        };
-        let rule = match f.url.as_deref().and_then(safe_href) {
-            Some(href) => format!(
-                r#"<a href="{}" rel="noopener noreferrer">{}</a>"#,
-                escape(href),
-                escape(&f.rule_id)
-            ),
-            None => escape(&f.rule_id),
-        };
-        let mut body = format!(
-            "{rule}<br><b>{}</b><br><span class=\"msg\">{}</span>",
-            escape(&f.title),
-            escape(&f.message)
-        );
-        let chips: Vec<String> = f
-            .confidence
-            .iter()
-            .map(|c| format!("confidence {c}"))
-            .chain(f.owasp.iter().cloned())
-            .chain(f.categories.iter().cloned())
-            .chain(f.tags.iter().cloned())
-            .map(|c| format!(r#"<span class="chip">{}</span>"#, escape(&c)))
-            .collect();
-        if !chips.is_empty() {
-            body.push_str("<br>");
-            body.push_str(&chips.concat());
-        }
-        if let Some(snippet) = &f.snippet {
-            let _ = write!(body, "<pre>{}</pre>", escape(snippet));
-        }
-        if !f.flow.is_empty() {
-            body.push_str(r#"<ol class="flow">"#);
-            for step in &f.flow {
-                let content = step
-                    .content
-                    .as_deref()
-                    .map_or_else(String::new, |c| format!(" <code>{}</code>", escape(c)));
-                let _ = write!(
-                    body,
-                    "<li>{} <code>{}</code>{content}</li>",
-                    step.kind.as_str(),
-                    escape(&location_of(&step.path, step.line, step.column))
-                );
-            }
-            body.push_str("</ol>");
-        }
-        if let Some(fix) = &f.fix {
-            let _ = write!(
-                body,
-                "<details><summary>suggested fix</summary><pre>{}</pre></details>",
-                escape(fix)
-            );
-        }
-        let refs: Vec<String> = f
-            .references
-            .iter()
-            .filter_map(|r| safe_href(r))
-            .map(|href| {
-                format!(
-                    r#"<a href="{0}" rel="noopener noreferrer">{0}</a>"#,
-                    escape(href)
-                )
-            })
-            .collect();
-        if !refs.is_empty() {
-            let _ = write!(
-                body,
-                r#"<details class="refs"><summary>{} reference(s)</summary>{}</details>"#,
-                refs.len(),
-                refs.join(" ")
-            );
-        }
-        if !f.extra.is_empty() {
-            body.push_str("<details><summary>more from the scanner</summary><ul>");
-            for (key, value) in &f.extra {
-                let _ = write!(body, "<li><b>{}</b>: {}</li>", escape(key), escape(value));
-            }
-            body.push_str("</ul></details>");
-        }
-        let cwes: Vec<String> = f.cwes.iter().map(|c| format!("CWE-{c}")).collect();
-        let row_class = if f.suppressed {
-            " class=\"suppressed\""
-        } else {
-            ""
-        };
-        let sev_label = if f.suppressed {
-            format!("{} (suppressed)", f.severity)
-        } else {
-            f.severity.to_string()
-        };
-        writeln!(
-            out,
-            r#"<tr{row_class}><td class="sev {sev}">{sev_label}</td><td><code>{location}</code></td><td>{tools}</td><td>{body}</td><td class="opt">{cwes}</td></tr>"#,
-            sev = f.severity,
-            location = escape(&location_of(&f.path, f.line, f.column)),
-            cwes = cwes.join(", ")
-        )?;
+    )
+}
+
+/// The rule, title, message, chips, snippet, flow, fix, references, identity and extras
+/// of one finding, as the HTML of its main cell.
+fn row_body(f: &Finding) -> String {
+    let rule = match f.url.as_deref().and_then(safe_href) {
+        Some(href) => format!(
+            r#"<a href="{}" rel="noopener noreferrer">{}</a>"#,
+            escape(href),
+            escape(&f.rule_id)
+        ),
+        None => escape(&f.rule_id),
+    };
+    let mut body = format!(
+        "{rule}<br><b>{}</b><br><span class=\"msg\">{}</span>",
+        escape(&f.title),
+        escape(&f.message)
+    );
+    let chips: Vec<String> = f
+        .confidence
+        .iter()
+        .map(|c| format!("confidence {c}"))
+        .chain((!f.also_reported_by.is_empty()).then(|| "corroborated".to_owned()))
+        .chain((!f.flow.is_empty()).then(|| "data flow".to_owned()))
+        .chain(f.owasp.iter().cloned())
+        .chain(f.categories.iter().cloned())
+        .chain(f.tags.iter().cloned())
+        .map(|c| format!(r#"<span class="chip">{}</span>"#, escape(&c)))
+        .collect();
+    if !chips.is_empty() {
+        body.push_str("<br>");
+        body.push_str(&chips.concat());
     }
-    writeln!(out, "</tbody></table>")
+    if let Some(snippet) = &f.snippet {
+        let _ = write!(body, "<pre>{}</pre>", escape(snippet));
+    }
+    if !f.flow.is_empty() {
+        body.push_str(r#"<ol class="flow">"#);
+        for step in &f.flow {
+            let content = step
+                .content
+                .as_deref()
+                .map_or_else(String::new, |c| format!(" <code>{}</code>", escape(c)));
+            let _ = write!(
+                body,
+                "<li>{} <code>{}</code>{content}</li>",
+                step.kind.as_str(),
+                escape(&location_of(&step.path, step.line, step.column))
+            );
+        }
+        body.push_str("</ol>");
+    }
+    if let Some(fix) = &f.fix {
+        let _ = write!(
+            body,
+            "<details><summary>suggested fix</summary><pre>{}</pre></details>",
+            escape(fix)
+        );
+    }
+    let refs: Vec<String> = f
+        .references
+        .iter()
+        .filter_map(|r| safe_href(r))
+        .map(|href| {
+            format!(
+                r#"<a href="{0}" rel="noopener noreferrer">{0}</a>"#,
+                escape(href)
+            )
+        })
+        .collect();
+    if !refs.is_empty() {
+        let _ = write!(
+            body,
+            r#"<details class="refs"><summary>{} reference(s)</summary>{}</details>"#,
+            refs.len(),
+            refs.join(" ")
+        );
+    }
+    if let Some(fingerprint) = &f.fingerprint {
+        let _ = write!(
+            body,
+            r#"<br><span class="msg">id <code>{}</code></span>"#,
+            escape(fingerprint)
+        );
+    } else {
+        let _ = write!(
+            body,
+            r#"<br><span class="msg">id <code>{}</code></span>"#,
+            escape(&crate::triage::key(f))
+        );
+    }
+    if !f.extra.is_empty() {
+        body.push_str("<details><summary>more from the scanner</summary><ul>");
+        for (key, value) in &f.extra {
+            let _ = write!(body, "<li><b>{}</b>: {}</li>", escape(key), escape(value));
+        }
+        body.push_str("</ul></details>");
+    }
+    body
+}
+
+fn write_row(f: &Finding, out: &mut impl Write) -> std::io::Result<()> {
+    let tools = if f.also_reported_by.is_empty() {
+        escape(&f.tool)
+    } else {
+        format!(
+            "{} <span class=\"msg\">(+{})</span>",
+            escape(&f.tool),
+            escape(&f.also_reported_by.join(", "))
+        )
+    };
+    let body = row_body(f);
+    let cwes: Vec<String> = f.cwes.iter().map(|c| format!("CWE-{c}")).collect();
+    let row_class = if f.suppressed {
+        " class=\"suppressed\""
+    } else if f.filtered.is_some() {
+        " class=\"filtered\""
+    } else {
+        ""
+    };
+    let sev_label = if f.suppressed {
+        format!("{} (suppressed)", f.severity)
+    } else if let Some(reason) = &f.filtered {
+        format!("{} ({})", f.severity, escape(reason))
+    } else {
+        f.severity.to_string()
+    };
+    writeln!(
+        out,
+        r#"<tr{row_class}><td class="sev {sev}">{sev_label}</td><td><code>{location}</code></td><td>{tools}</td><td>{body}</td><td class="opt">{cwes}</td></tr>"#,
+        sev = f.severity,
+        location = escape(&location_of(&f.path, f.line, f.column)),
+        cwes = cwes.join(", ")
+    )
 }
 
 #[cfg(test)]
@@ -375,5 +499,49 @@ mod tests {
             html.contains("xss<br>"),
             "the unlinked rule id is still shown: {html}"
         );
+    }
+
+    #[test]
+    fn frequent_rules_fold_and_set_aside_findings_have_their_own_section() {
+        use crate::model::test_support::finding;
+        let mut findings: Vec<Finding> = (1..=3)
+            .map(|i| finding("semgrep", "rule.a", Severity::High, &format!("a{i}.js"), i))
+            .collect();
+        findings.push(finding("bearer", "rule.b", Severity::Low, "b.php", 1));
+        let mut aside = finding("semgrep", "rule.c", Severity::Medium, "c.php", 1);
+        aside.filtered = Some("already in the baseline".to_owned());
+        aside.fingerprint = Some("fp<1>".to_owned());
+        findings.push(aside);
+        let report = Report::new(
+            "/work".into(),
+            "2026-11-03T00:00:00Z".to_owned(),
+            Vec::new(),
+            findings,
+            0,
+        );
+        let mut out = Vec::new();
+        render(&report, &mut out).unwrap();
+        let html = String::from_utf8(out).unwrap();
+        assert!(html.contains("<h2>Findings (4)</h2>"), "{html}");
+        assert!(
+            html.contains(r#"<h3 class="sev high">high (3)</h3>"#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<details class="group" open><summary><span class="sev high">high</span> semgrep <code>rule.a</code> rule.a — 3 findings</summary>"#), "{html}");
+        assert!(
+            html.contains(r#"<h3 class="sev low">low (1)</h3>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains("<details><summary>Set aside by the triage (1, not counted)</summary>"),
+            "{html}"
+        );
+        assert!(html.contains(r#"<tr class="filtered"><td class="sev medium">medium (already in the baseline)</td>"#), "{html}");
+        assert!(html.contains("id <code>fp&lt;1&gt;</code>"), "{html}");
+        assert!(
+            html.contains("id <code>bearer:rule.b:b.php:1</code>"),
+            "{html}"
+        );
+        assert!(!html.contains("<script"), "{html}");
     }
 }

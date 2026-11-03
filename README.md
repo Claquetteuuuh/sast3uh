@@ -176,7 +176,7 @@ thing of your environment Plumber sees, and no other scanner ever sees them.
 Without a token the control is skipped on purpose, otherwise Plumber withholds
 its score and every severity.
 
-## Rule packs: exhaustive by default
+## Rule packs: security by default, exhaustive on request
 
 Semgrep is only as good as the rules it is given. sast3uh looks at what the
 target holds (languages from file names, notable files such as workflows,
@@ -194,9 +194,11 @@ packs, strict subsets and style-only packs are left out. Semgrep
 deduplicates a rule shared by several packs, so overlap never doubles a
 finding.
 
-- `--semgrep-profile exhaustive` (default): every non-style pack, including
-  the audit-oriented, community and correctness ones.
-- `--semgrep-profile security`: the security packs only — fewer findings.
+- `--semgrep-profile security` (default): the security packs — the curated
+  sets, OWASP and CWE lists, secrets, injections, the language packs.
+- `--semgrep-profile exhaustive`: every non-style pack, including the
+  audit-oriented, community and correctness ones; on a large code base
+  expect several times more findings, most of them low confidence.
 - `--semgrep-config <CONFIG>` (repeatable): your own list, no selection.
 - `sast3uh packs [DIR]`: what the selection would be, and why.
 
@@ -212,6 +214,44 @@ Luacheck runs with `std = max` and honours the project's `.luacheckrc`.
 CodeQL runs `database create` (no build where CodeQL allows it) then
 `database analyze` with `codeql/<language>-queries:codeql-suites/<language>-security-extended.qls`
 per language; Plumber runs `analyze --min-points 0` with every control.
+
+## Keeping the noise down
+
+A scan of a large project returns thousands of findings, most of them from
+rules the scanners themselves rate "low confidence". sast3uh never drops
+what a scanner said, but it decides what is worth reading first:
+
+- **A confidence floor.** A finding whose scanner states a confidence below
+  `--min-confidence` (default `medium`) is *set aside*: still in the JSON,
+  YAML and XML reports with its reason in `filtered`, listed in a folded
+  section of the HTML and summarised in the text, but out of the counts and
+  of the exit code — exactly like a finding the scanner suppressed. A
+  finding another tool corroborates is never set aside. A rule of Semgrep or
+  CodeQL that states no confidence at all (third-party ports, mostly) is
+  treated as low; Bearer, Trivy and Plumber never state one and are kept.
+  `--min-confidence low` shows everything.
+- **The strongest signal first.** Within a severity, findings reported by
+  two tools come first, then those with a data flow (source to sink), then
+  by the scanner's confidence. The text report marks them `(+bearer)` and
+  `~flow`; the HTML shows chips.
+- **One block per rule.** A rule that fires many times is one entry with its
+  locations (text) or one folded block (HTML), so 350 jQuery selectors do
+  not bury one SQL injection.
+- **Triage filters.** `--corroborated` keeps only what at least two tools
+  report; `--with-flow` only what carries a data flow. Everything else is
+  set aside with that reason.
+- **What is already known.** `--baseline previous.json` sets aside every
+  finding of a previous report, so only what is new counts. An ignore file
+  (`--ignore-file .sast3uh-ignore`, one identity per line, `#` comments)
+  sets aside what was reviewed; `sast3uh ignore <IDENTITY>… --reason "…"`
+  appends to it. An identity is the scanner's `fingerprint` from the report
+  (shown as `id` in the HTML), or `tool:rule:path:line` when the scanner
+  gives none.
+
+On GLPI (3 400 PHP files) these defaults bring the counted Semgrep findings
+from 1 915 (exhaustive profile) to 473, of which 325 come from rules Semgrep
+classes as vulnerabilities, without losing one: 1 337 are set aside in the
+same report, a `--min-confidence low` away.
 
 ## Comment markers and suppression comments
 
@@ -276,7 +316,12 @@ sast3uh packs [DIR]               # languages found and Semgrep packs selected
   -o, --output <FILE>                      atomic write; stdout otherwise
   -t, --tools <semgrep,bearer,trivy,codeql,plumber,luacheck>  subset, registry order
       --semgrep-config <CONFIG>            repeatable (p/rust, rules.yml…); replaces the selection
-      --semgrep-profile <exhaustive|security>  how many packs the selection takes (default: exhaustive)
+      --semgrep-profile <security|exhaustive>  how many packs the selection takes (default: security)
+      --min-confidence <low|medium|high>   set aside what the scanner is less sure of (default: medium)
+      --corroborated                       keep only what two tools report
+      --with-flow                          keep only what carries a data flow
+      --baseline <REPORT.json>             set aside what a previous report already had
+      --ignore-file <FILE>                 set aside the identities listed there (see `sast3uh ignore`)
       --fail-on <severity>                 exit 1 at or above (default: info)
       --timeout <seconds>                  per scanner (default: 600)
       --update <ask|always|never>          when a scanner is behind (default: ask)

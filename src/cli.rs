@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::model::Severity;
+use crate::model::{Confidence, Severity};
 use crate::output::Format;
 use crate::packs::Profile;
 use crate::pipeline::UpdatePolicy;
@@ -31,6 +31,9 @@ pub enum Command {
     Tools(ToolsArgs),
     /// Show what a directory holds and which Semgrep rule packs a scan of it would run.
     Packs(PacksArgs),
+    /// Add findings to an ignore file by identity (the `fingerprint` of the report, or
+    /// `tool:rule:path:line`), so that later scans set them aside.
+    Ignore(IgnoreArgs),
 }
 
 /// Arguments of `scan`.
@@ -59,10 +62,33 @@ pub struct ScanArgs {
     #[arg(long = "semgrep-config", value_name = "CONFIG")]
     pub semgrep_configs: Vec<String>,
 
-    /// How many Semgrep packs the automatic selection takes: every non-style pack, or the
-    /// security ones only.
-    #[arg(long, value_enum, default_value_t = Profile::Exhaustive)]
+    /// How many Semgrep packs the automatic selection takes: the security ones (curated
+    /// packs, OWASP, CWE, secrets, injections), or every non-style pack (audit and
+    /// community packs too: more findings, more to triage).
+    #[arg(long, value_enum, default_value_t = Profile::Security)]
     pub semgrep_profile: Profile,
+
+    /// Set aside the findings whose scanner states a lower confidence (kept in the report
+    /// with the reason, out of the counts and of the exit code); a finding another tool
+    /// corroborates is never set aside. `low` keeps everything.
+    #[arg(long, value_enum, default_value_t = Confidence::Medium)]
+    pub min_confidence: Confidence,
+
+    /// Keep only the findings reported by at least two tools (the rest is set aside).
+    #[arg(long)]
+    pub corroborated: bool,
+
+    /// Keep only the findings that carry a data flow, source to sink (the rest is set aside).
+    #[arg(long)]
+    pub with_flow: bool,
+
+    /// A previous JSON report: its findings are set aside, only what is new counts.
+    #[arg(long, value_name = "REPORT.json")]
+    pub baseline: Option<PathBuf>,
+
+    /// Identities to set aside, one per line (`#` comments); see `sast3uh ignore`.
+    #[arg(long, value_name = "FILE")]
+    pub ignore_file: Option<PathBuf>,
 
     /// Exit 1 when a finding is at or above this severity.
     #[arg(long, default_value = "info", value_name = "SEVERITY")]
@@ -116,8 +142,24 @@ pub struct PacksArgs {
     pub path: PathBuf,
 
     /// Profile to select with.
-    #[arg(long, value_enum, default_value_t = Profile::Exhaustive)]
+    #[arg(long, value_enum, default_value_t = Profile::Security)]
     pub semgrep_profile: Profile,
+}
+
+/// Arguments of `ignore`.
+#[derive(Debug, Args)]
+pub struct IgnoreArgs {
+    /// Identities to add: a `fingerprint` from the JSON report, or `tool:rule:path:line`.
+    #[arg(required = true, value_name = "IDENTITY")]
+    pub identities: Vec<String>,
+
+    /// The ignore file to append to (created when missing).
+    #[arg(long, value_name = "FILE", default_value = ".sast3uh-ignore")]
+    pub file: PathBuf,
+
+    /// Why, written next to each identity.
+    #[arg(long)]
+    pub reason: Option<String>,
 }
 
 /// Arguments of `tools`.
@@ -152,7 +194,12 @@ mod tests {
         assert_eq!(args.fail_on, Severity::Info);
         assert_eq!(args.timeout, 600);
         assert_eq!(args.update, UpdatePolicy::Ask);
-        assert_eq!(args.semgrep_profile, Profile::Exhaustive);
+        assert_eq!(args.semgrep_profile, Profile::Security);
+        assert_eq!(args.min_confidence, Confidence::Medium);
+        assert!(!args.corroborated);
+        assert!(!args.with_flow);
+        assert!(args.baseline.is_none());
+        assert!(args.ignore_file.is_none());
         assert!(!args.offline);
         assert!(!args.no_dedup);
         assert!(!args.comments);

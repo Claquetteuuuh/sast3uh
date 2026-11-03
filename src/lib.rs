@@ -32,6 +32,7 @@ pub mod scanners;
 pub mod sweep;
 pub mod timefmt;
 pub mod tools;
+pub mod triage;
 pub mod update;
 pub mod version;
 
@@ -95,7 +96,7 @@ where
     let offline = match &cli.command {
         Command::Scan(args) => args.offline,
         Command::Tools(args) => args.offline,
-        Command::Packs(_) => true,
+        Command::Packs(_) | Command::Ignore(_) => true,
     };
     let runner = RealRunner;
     let mut prompter = TerminalPrompter;
@@ -127,6 +128,19 @@ pub fn run_with(cli: Cli, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::
         Command::Tools(_) => {
             let infos = pipeline::inventory(deps);
             pipeline::write_inventory(&infos, out).context("writing the tool inventory")?;
+            Ok(ExitCode::from(EXIT_CLEAN))
+        }
+        Command::Ignore(args) => {
+            let added =
+                triage::add_to_ignore_file(&args.file, &args.identities, args.reason.as_deref())
+                    .map_err(|e| anyhow::anyhow!(e))
+                    .with_context(|| format!("updating {}", args.file.display()))?;
+            let _ = writeln!(
+                deps.log,
+                "{added} identit{} added to {}",
+                if added == 1 { "y" } else { "ies" },
+                args.file.display()
+            );
             Ok(ExitCode::from(EXIT_CLEAN))
         }
         Command::Packs(args) => {
@@ -200,6 +214,25 @@ fn scan(args: &ScanArgs, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::R
         live: std::io::stderr().is_terminal(),
         comments: args.comments,
         suppressions: args.suppressions,
+        triage: triage::Triage {
+            min_confidence: args.min_confidence,
+            corroborated_only: args.corroborated,
+            with_flow_only: args.with_flow,
+            baseline: match &args.baseline {
+                Some(path) => triage::load_baseline(path)
+                    .map_err(|e| anyhow::anyhow!(e))
+                    .context("reading the baseline")?,
+                None => std::collections::BTreeSet::default(),
+            },
+            ignored: match &args.ignore_file {
+                Some(path) => triage::load_ignore_file(path)
+                    .map_err(|e| anyhow::anyhow!(e))
+                    .context("reading the ignore file")?,
+                None => std::collections::BTreeSet::default(),
+            },
+            // Filled by the pipeline from the scanner registry.
+            states_confidence: std::collections::BTreeSet::default(),
+        },
     };
 
     let report = pipeline::scan(&args.path, &options, deps)
@@ -358,7 +391,7 @@ mod tests {
         assert!(out.is_empty(), "nothing on stdout when --output is given");
         assert!(log.contains("report written to"), "{log}");
         let yaml = std::fs::read_to_string(&report_path).expect("report file");
-        assert!(yaml.contains("schema_version: 2"), "{yaml}");
+        assert!(yaml.contains("schema_version: 3"), "{yaml}");
 
         let cli = parse(&[
             "sast3uh",
@@ -450,7 +483,7 @@ mod tests {
         assert!(text.contains("p/golang"), "{text}");
         assert!(text.contains("p/default"), "{text}");
         assert!(!text.contains("p/python"), "{text}");
-        assert!(text.contains("Exhaustive profile"), "{text}");
+        assert!(text.contains("Security profile"), "{text}");
     }
 
     #[test]

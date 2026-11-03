@@ -69,8 +69,16 @@ pub fn render(report: &Report, out: &mut impl Write) -> std::io::Result<()> {
     let s = &report.summary;
     writeln!(
         out,
-        r#"  <summary total="{}" critical="{}" high="{}" medium="{}" low="{}" info="{}" suppressed="{}" duplicates-removed="{}"/>"#,
-        s.total, s.critical, s.high, s.medium, s.low, s.info, s.suppressed, s.duplicates_removed
+        r#"  <summary total="{}" critical="{}" high="{}" medium="{}" low="{}" info="{}" suppressed="{}" filtered="{}" duplicates-removed="{}"/>"#,
+        s.total,
+        s.critical,
+        s.high,
+        s.medium,
+        s.low,
+        s.info,
+        s.suppressed,
+        s.filtered,
+        s.duplicates_removed
     )?;
     writeln!(out, "  <findings>")?;
     for f in &report.findings {
@@ -93,6 +101,9 @@ fn write_finding(f: &Finding, out: &mut impl Write) -> std::io::Result<()> {
     }
     if f.suppressed {
         write!(out, r#" suppressed="true""#)?;
+    }
+    if let Some(reason) = &f.filtered {
+        write!(out, r#" filtered="{}""#, escape(reason))?;
     }
     for (name, value) in [
         ("line", f.line),
@@ -196,7 +207,7 @@ mod tests {
         render(&sample_report(), &mut out).unwrap();
         let xml = String::from_utf8(out).unwrap();
         assert!(xml.starts_with("<?xml version=\"1.0\""));
-        assert!(xml.contains(r#"<sast3uh-report schema-version="2" generated-at="2026-11-02T12:00:00Z" target="/work/project">"#), "{xml}");
+        assert!(xml.contains(r#"<sast3uh-report schema-version="3" generated-at="2026-11-02T12:00:00Z" target="/work/project">"#), "{xml}");
         assert!(xml.contains(r#"<tool name="bearer" version="2.1.1" state="skipped" findings="0" duration-ms="10" reason="no &lt;supported&gt; files"/>"#), "{xml}");
         assert!(xml.contains(r#"<tool name="semgrep" version="1.163.0" state="completed" findings="9" duration-ms="1234" scanned-files="3">"#), "{xml}");
         assert!(
@@ -206,7 +217,7 @@ mod tests {
             "{xml}"
         );
         assert!(xml.contains(r#"<diagnostic level="warn" rule-id="rule.x" path="src/app.js">Internal matching error &amp; more</diagnostic>"#), "{xml}");
-        assert!(xml.contains(r#"<summary total="5" critical="1" high="1" medium="1" low="1" info="1" suppressed="1" duplicates-removed="3"/>"#), "{xml}");
+        assert!(xml.contains(r#"<summary total="5" critical="1" high="1" medium="1" low="1" info="1" suppressed="1" filtered="0" duplicates-removed="3"/>"#), "{xml}");
         assert!(xml.contains(r#"<finding tool="semgrep" rule-id="eval" severity="critical" confidence="high" line="7" end-line="7" column="3" end-column="9">"#), "{xml}");
         assert!(xml.contains(r#"<finding tool="semgrep" rule-id="nosemgrep-ed" severity="critical" suppressed="true""#), "{xml}");
         assert!(xml.contains("<path>src/&lt;b&gt;.js</path>"), "{xml}");

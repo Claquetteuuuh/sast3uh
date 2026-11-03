@@ -349,6 +349,13 @@ pub trait Scanner: Send + Sync {
     fn inherit_env(&self) -> &'static [&'static str] {
         &[]
     }
+    /// `true` when the tool's rules normally state a confidence (Semgrep's `confidence`,
+    /// `CodeQL`'s `precision`): a finding of such a tool without one comes from a rule that
+    /// skipped the metadata, and the triage treats it as low. A tool that never states one
+    /// (Bearer, Trivy, Plumber) is left alone.
+    fn states_confidence(&self) -> bool {
+        false
+    }
     /// One line on what the scan will use (rule packs…), for the log.
     fn plan(&self, _options: &ScanOptions) -> Option<String> {
         None

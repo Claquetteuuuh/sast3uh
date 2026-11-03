@@ -200,8 +200,15 @@ fn packs_shows_the_target_languages_and_the_selected_packs() {
                 .and(predicate::str::contains("p/javascript"))
                 .and(predicate::str::contains("p/github-actions"))
                 .and(predicate::str::contains("p/gitleaks"))
-                .and(predicate::str::contains("Exhaustive profile")),
+                .and(predicate::str::contains("Security profile")),
         );
+    bin()
+        .args(["packs", "--semgrep-profile", "exhaustive"])
+        .arg(dir.path())
+        .env("PATH", "")
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("Exhaustive profile"));
     bin()
         .args(["packs", "--semgrep-profile", "security"])
         .arg(dir.path())
@@ -460,7 +467,7 @@ fn scan_runs_the_stubs_merges_and_exits_1_on_findings() {
         .stdout
         .clone();
     let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
-    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["schema_version"], 3);
     let tools = json["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 6);
     assert!(
@@ -482,11 +489,16 @@ fn scan_runs_the_stubs_merges_and_exits_1_on_findings() {
     assert_eq!(json["summary"]["duplicates_removed"], 4, "{json}");
     assert_eq!(
         json["summary"]["total"],
-        18 + 24,
-        "trivy adds 24 findings on files nobody else scans: {json}"
+        18 + 24 - 1,
+        "trivy adds 24 findings on files nobody else scans; one low-confidence Semgrep \
+         finding nobody corroborates is set aside: {json}"
     );
-    assert_eq!(json["summary"]["critical"], 5 + 1, "{json}");
-    assert_eq!(json["summary"]["high"], 1 + 12, "{json}");
+    assert_eq!(json["summary"]["filtered"], 1, "{json}");
+    assert_eq!(
+        json["findings"].as_array().unwrap().len(),
+        42,
+        "set aside, not dropped"
+    );
     let merged: Vec<_> = json["findings"]
         .as_array()
         .unwrap()
@@ -551,8 +563,8 @@ fn every_format_is_produced() {
     let dir = tempfile::tempdir().expect("tempdir");
     for (format, marker) in [
         ("text", "Summary:"),
-        ("json", "\"schema_version\": 2"),
-        ("yaml", "schema_version: 2"),
+        ("json", "\"schema_version\": 3"),
+        ("yaml", "schema_version: 3"),
         ("xml", "<?xml"),
         ("html", "<!doctype html>"),
     ] {
@@ -611,7 +623,169 @@ fn no_dedup_keeps_every_finding() {
         .clone();
     let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
     assert_eq!(json["summary"]["duplicates_removed"], 0);
-    assert_eq!(json["summary"]["total"], 16);
+    assert_eq!(json["summary"]["total"], 12);
+    assert_eq!(
+        json["summary"]["filtered"], 4,
+        "low-confidence, uncorroborated: {json}"
+    );
+    assert_eq!(
+        json["findings"].as_array().unwrap().len(),
+        16,
+        "set aside, not dropped"
+    );
+}
+
+#[cfg(unix)]
+fn triage_run(stubs: &Stubs, dir: &Path, extra: &[&str], code: i32) -> serde_json::Value {
+    let output = bin()
+        .args([
+            "scan",
+            "--offline",
+            "--format",
+            "json",
+            "--tools",
+            "semgrep",
+            "--tools",
+            "bearer",
+        ])
+        .args(extra)
+        .arg(dir)
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(code)
+        .get_output()
+        .stdout
+        .clone();
+    serde_json::from_slice(&output).expect("json report")
+}
+
+#[cfg(unix)]
+#[test]
+fn triage_flags_set_findings_aside_with_a_reason_and_low_confidence_brings_them_back() {
+    let stubs = Stubs::new(&["semgrep", "bearer"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let default = triage_run(&stubs, dir.path(), &[], 1);
+    let everything = triage_run(&stubs, dir.path(), &["--min-confidence", "low"], 1);
+    assert_eq!(everything["summary"]["filtered"], 0, "{everything}");
+    assert!(
+        default["summary"]["total"].as_u64() < everything["summary"]["total"].as_u64(),
+        "{default}"
+    );
+    let aside: Vec<_> = default["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["filtered"].is_string())
+        .collect();
+    assert!(!aside.is_empty());
+    assert!(
+        aside
+            .iter()
+            .all(|f| f["filtered"] == "confidence low below medium" && f["tool"] == "semgrep"),
+        "{default}"
+    );
+    let corroborated = triage_run(&stubs, dir.path(), &["--corroborated"], 1);
+    assert_eq!(
+        corroborated["summary"]["total"], 4,
+        "the four Semgrep+Bearer merges: {corroborated}"
+    );
+    assert!(
+        corroborated["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["filtered"] == "reported by one tool only"),
+        "{corroborated}"
+    );
+    let flowing = triage_run(&stubs, dir.path(), &["--with-flow"], 1);
+    assert!(
+        flowing["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["filtered"] == "no data flow"),
+        "{flowing}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_baseline_and_an_ignore_file_hide_what_is_known() {
+    let stubs = Stubs::new(&["semgrep", "bearer"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let everything = triage_run(&stubs, dir.path(), &["--min-confidence", "low"], 1);
+    let baseline = scratch.path().join("baseline.json");
+    std::fs::write(&baseline, everything.to_string()).expect("baseline");
+    let news = triage_run(
+        &stubs,
+        dir.path(),
+        &["--baseline", baseline.to_str().unwrap()],
+        0,
+    );
+    assert_eq!(
+        news["summary"]["total"], 0,
+        "nothing new since the baseline: {news}"
+    );
+    assert!(
+        news["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["filtered"] == "already in the baseline"),
+        "the baseline wins over the confidence floor: {news}"
+    );
+
+    let first = &everything["findings"][0];
+    let identity = first["fingerprint"].as_str().map_or_else(
+        || {
+            format!(
+                "{}:{}:{}:{}",
+                first["tool"].as_str().unwrap(),
+                first["rule_id"].as_str().unwrap(),
+                first["path"].as_str().unwrap(),
+                first["line"]
+            )
+        },
+        str::to_owned,
+    );
+    let ignore = scratch.path().join(".sast3uh-ignore");
+    bin()
+        .args(["ignore", "--file"])
+        .arg(&ignore)
+        .args(["--reason", "reviewed, false positive"])
+        .arg(&identity)
+        .assert()
+        .code(0)
+        .stderr(predicate::str::contains("1 identity added to"));
+    let text = std::fs::read_to_string(&ignore).expect("ignore file");
+    assert!(
+        text.contains(&identity) && text.contains("# reviewed, false positive"),
+        "{text}"
+    );
+    let ignored = triage_run(
+        &stubs,
+        dir.path(),
+        &[
+            "--ignore-file",
+            ignore.to_str().unwrap(),
+            "--min-confidence",
+            "low",
+        ],
+        1,
+    );
+    assert_eq!(ignored["summary"]["filtered"], 1, "{ignored}");
+    assert_eq!(
+        ignored["summary"]["total"],
+        everything["summary"]["total"].as_u64().unwrap() - 1
+    );
+    bin()
+        .args(["scan", "--offline", "--ignore-file", "/nonexistent/ignore"])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("reading the ignore file"));
 }
 
 #[cfg(unix)]

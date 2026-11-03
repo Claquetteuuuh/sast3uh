@@ -75,7 +75,19 @@ impl FromStr for Severity {
 }
 
 /// How sure the scanner is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    clap::ValueEnum,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
     /// Low.
@@ -179,6 +191,10 @@ pub struct Finding {
     /// counts and of the exit code.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppressed: bool,
+    /// Why sast3uh set the finding aside (confidence below the floor, in the baseline, in
+    /// the ignore file…): still in the report, out of the counts and of the exit code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filtered: Option<String>,
     /// A short title.
     pub title: String,
     /// The scanner's message.
@@ -233,6 +249,13 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// `true` when the finding counts: neither suppressed by its tool nor set aside by
+    /// sast3uh's triage.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        !self.suppressed && self.filtered.is_none()
+    }
+
     /// A finding with only the required fields; set the rest as the scanner provides them.
     pub fn new(
         tool: impl Into<String>,
@@ -249,6 +272,7 @@ impl Finding {
             severity,
             confidence: None,
             suppressed: false,
+            filtered: None,
             title: title.into(),
             message: message.into(),
             path,
@@ -403,6 +427,9 @@ pub struct Summary {
     pub info: usize,
     /// Findings suppressed in the code.
     pub suppressed: usize,
+    /// Findings set aside by sast3uh's triage (see `Finding::filtered`), counted apart.
+    #[serde(default)]
+    pub filtered: usize,
     /// Findings dropped or merged by deduplication.
     pub duplicates_removed: usize,
 }
@@ -417,6 +444,10 @@ impl Summary {
         for finding in findings {
             if finding.suppressed {
                 summary.suppressed += 1;
+                continue;
+            }
+            if finding.filtered.is_some() {
+                summary.filtered += 1;
                 continue;
             }
             summary.total += 1;
@@ -462,7 +493,7 @@ pub struct Report {
 
 impl Report {
     /// The current schema version.
-    pub const SCHEMA_VERSION: u32 = 2;
+    pub const SCHEMA_VERSION: u32 = 3;
 
     /// Assemble a report; `findings` must already be deduplicated and sorted.
     pub fn new(
@@ -483,9 +514,9 @@ impl Report {
         }
     }
 
-    /// The findings that count: not suppressed.
+    /// The findings that count: neither suppressed nor set aside.
     pub fn active(&self) -> impl Iterator<Item = &Finding> {
-        self.findings.iter().filter(|f| !f.suppressed)
+        self.findings.iter().filter(|f| f.is_active())
     }
 
     /// `true` when there is no active finding.

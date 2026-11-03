@@ -330,6 +330,10 @@ impl Scanner for CodeQl {
         os_args(&["version", "--format=terse"])
     }
 
+    fn states_confidence(&self) -> bool {
+        true
+    }
+
     fn env(&self) -> Vec<(OsString, OsString)> {
         vec![("NO_COLOR".into(), "1".into())]
     }

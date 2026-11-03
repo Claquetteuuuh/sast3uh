@@ -64,6 +64,10 @@ impl Scanner for Semgrep {
         args
     }
 
+    fn states_confidence(&self) -> bool {
+        true
+    }
+
     fn env(&self) -> Vec<(OsString, OsString)> {
         vec![
             ("SEMGREP_SEND_METRICS".into(), "off".into()),
