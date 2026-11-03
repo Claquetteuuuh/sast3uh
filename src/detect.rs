@@ -296,7 +296,7 @@ impl Detected {
 }
 
 /// Directories no scanner should look into.
-const SKIPPED_DIRS: &[&str] = &[
+pub(crate) const SKIPPED_DIRS: &[&str] = &[
     ".git",
     ".hg",
     ".svn",

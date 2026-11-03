@@ -53,6 +53,9 @@ impl Scanner for Semgrep {
             // On a terminal Semgrep's own status lines on standard error are the progress.
             args.push("--quiet".into());
         }
+        if options.suppressions == crate::sweep::Suppressions::Ignore {
+            args.push("--disable-nosem".into());
+        }
         for config in options.semgrep_configs() {
             args.push("--config".into());
             args.push(config.into());
@@ -878,6 +881,17 @@ mod tests {
             ..ScanOptions::default()
         };
         assert!(!Semgrep.scan_args(&live).iter().any(|a| a == "--quiet"));
+        assert!(!args.contains(&"--disable-nosem".to_owned()));
+        let ignoring = ScanOptions {
+            suppressions: crate::sweep::Suppressions::Ignore,
+            ..ScanOptions::default()
+        };
+        assert!(
+            Semgrep
+                .scan_args(&ignoring)
+                .iter()
+                .any(|a| a == "--disable-nosem")
+        );
         assert!(
             Semgrep
                 .plan(&options)

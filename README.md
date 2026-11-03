@@ -209,6 +209,46 @@ CodeQL runs `database create` (no build where CodeQL allows it) then
 `database analyze` with `codeql/<language>-queries:codeql-suites/<language>-security-extended.qls`
 per language; Plumber runs `analyze --min-points 0` with every control.
 
+## Comment markers and suppression comments
+
+Two passes of sast3uh's own run after the scanners, on request. Both are
+plain whole-word, case-insensitive searches over every text file of the
+target (the same directories as the detector are skipped: `.git`,
+`node_modules`, `target`, `vendor`, `dist`…; binaries and files over 4 MiB
+too), and each hit says the file, the line and the column.
+
+- `--comments` reports the markers developers leave behind — `TODO`, `to do`,
+  `FIXME`, `fix me`, `to fix`, `HACK`, `XXX`, `bypass`, `kludge`,
+  `workaround` (hyphen and underscore spellings included) — as `comments`
+  findings at severity *info*, one per line, with the line as snippet.
+- `--suppressions report` reports every inline comment that silences a
+  scanner as a `suppressions` finding at severity *low*, with the rule it
+  names in `extra.argument`; `--suppressions ignore` does that and disables
+  the suppressions where the scanner allows it, so that the silenced
+  findings come back in the report:
+
+| Scanner  | Comment                                      | Placement                   | `ignore` mode                             |
+| -------- | -------------------------------------------- | --------------------------- | ----------------------------------------- |
+| semgrep  | `nosemgrep` / `nosem`, `: rule-id`           | same line or the line above | `--disable-nosem`: the findings come back |
+| bearer   | `bearer:disable rule_id`                     | the line above              | no switch: the comment is reported        |
+| trivy    | `trivy:ignore:AVD-…`, `tfsec:ignore:…`       | the line above              | no switch: the comment is reported        |
+| luacheck | `-- luacheck: ignore`, `no unused`, `push`…  | same line or the closure    | no switch: the comment is reported        |
+| codeql   | `lgtm[query-id]`, `lgtm`, `codeql[query-id]` | the alert's line            | the suppression queries are not run       |
+| plumber  | none (exceptions live in `.plumber.yaml`)    |                             |                                           |
+| others   | `nosec`, `NOSONAR`, `noqa`, `nolint`…        | see below                   | reported under `other`                    |
+
+The "others" row covers the suppression comments of tools sast3uh does not
+drive but that are common in code bases: `nosec` (Bandit, gosec),
+`NOSONAR`, `noqa`, `nolint`, `gitleaks:allow`, `checkov:skip`, `pragma:
+allowlist secret`, `trufflehog:ignore`.
+
+By default (`honour`) each scanner applies its own comments; a finding it
+still reports stays flagged `suppressed`, out of the counts and of the exit
+code. For CodeQL that means running the pack's `AlertSuppression` queries
+next to the suite (checked with `codeql resolve queries` first), as GitHub
+code scanning does — without them a `lgtm[…]` comment would be silently
+ignored.
+
 ## What a finding carries
 
 Everything the scanner said: severity and confidence, rule id, title and
@@ -237,7 +277,9 @@ sast3uh packs [DIR]               # languages found and Semgrep packs selected
       --timeout <seconds>                  per scanner (default: 600)
       --update <ask|always|never>          when a scanner is behind (default: ask)
       --offline                            no GitHub lookup at all
-      --no-dedup                           keep every finding
+            --no-dedup                           keep every finding
+      --comments                           also report TODO / FIXME / HACK / XXX / bypass… comments
+      --suppressions <honour|report|ignore>  what to do with nosemgrep, bearer:disable… comments (default: honour)
 ```
 
 Exit codes: `0` clean · `1` findings at or above `--fail-on` · `2` usage

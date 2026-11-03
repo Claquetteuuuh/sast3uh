@@ -29,6 +29,7 @@ pub mod packs;
 pub mod pipeline;
 pub mod prompt;
 pub mod scanners;
+pub mod sweep;
 pub mod timefmt;
 pub mod tools;
 pub mod update;
@@ -190,6 +191,8 @@ fn scan(args: &ScanArgs, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::R
         },
         dedup: !args.no_dedup,
         live: std::io::stderr().is_terminal(),
+        comments: args.comments,
+        suppressions: args.suppressions,
     };
 
     let report = pipeline::scan(&args.path, &options, deps)

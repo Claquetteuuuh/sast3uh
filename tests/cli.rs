@@ -322,6 +322,101 @@ fn codeql_and_plumber_run_on_a_project_with_code_and_workflows() {
 
 #[cfg(unix)]
 #[test]
+fn comment_markers_and_suppression_comments_are_swept_on_request() {
+    let stubs = Stubs::new(&["luacheck"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("a.lua"),
+        "-- TODO: later\nlocal x = 1 -- luacheck: ignore\n",
+    )
+    .expect("write");
+    std::fs::write(dir.path().join("b.py"), "eval(x)  # nosemgrep: rule-id\n").expect("write");
+    let output = bin()
+        .args([
+            "scan",
+            "--offline",
+            "--format",
+            "json",
+            "--tools",
+            "luacheck",
+            "--comments",
+            "--suppressions",
+            "report",
+        ])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(1)
+        .stderr(
+            predicate::str::contains("comments: 1 finding(s) in 2 file(s)").and(
+                predicate::str::contains("suppressions: 2 finding(s) in 2 file(s)"),
+            ),
+        )
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
+    let names: Vec<&str> = json["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["tool"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["luacheck", "comments", "suppressions"],
+        "{json}"
+    );
+    let findings = json["findings"].as_array().unwrap();
+    assert!(
+        findings.iter().any(|f| f["tool"] == "comments"
+            && f["rule_id"] == "todo"
+            && f["path"] == "a.lua"
+            && f["line"] == 1
+            && f["severity"] == "info"),
+        "{json}"
+    );
+    assert!(
+        findings.iter().any(|f| f["tool"] == "suppressions"
+            && f["rule_id"] == "semgrep"
+            && f["path"] == "b.py"
+            && f["line"] == 1
+            && f["extra"]["argument"] == "rule-id"),
+        "{json}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["tool"] == "suppressions" && f["rule_id"] == "luacheck" && f["line"] == 2),
+        "{json}"
+    );
+
+    let output = bin()
+        .args([
+            "scan",
+            "--offline",
+            "--format",
+            "json",
+            "--tools",
+            "luacheck",
+        ])
+        .arg(dir.path())
+        .env("PATH", &stubs.path)
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json report");
+    assert_eq!(
+        json["tools"].as_array().unwrap().len(),
+        1,
+        "no sweep by default: {json}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn codeql_and_plumber_are_skipped_on_a_project_without_code_or_workflows() {
     let stubs = Stubs::new(&["codeql", "plumber"]);
     let dir = tempfile::tempdir().expect("tempdir");

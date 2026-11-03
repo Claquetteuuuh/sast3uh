@@ -11,6 +11,7 @@ use crate::model::Severity;
 use crate::output::Format;
 use crate::packs::Profile;
 use crate::pipeline::UpdatePolicy;
+use crate::sweep::Suppressions;
 
 /// One SAST to run them all.
 #[derive(Debug, Parser)]
@@ -79,6 +80,18 @@ pub struct ScanArgs {
     /// Keep every finding, even the ones reported twice.
     #[arg(long)]
     pub no_dedup: bool,
+
+    /// Also report the comment markers of the code base (TODO, FIXME, HACK, XXX, bypass,
+    /// kludge, workaround…) with their file and line, as `comments` findings.
+    #[arg(long)]
+    pub comments: bool,
+
+    /// What to do with the inline comments that silence a scanner (nosemgrep,
+    /// bearer:disable, trivy:ignore, luacheck:, lgtm[…]…): honour them, report each one as a
+    /// `suppressions` finding, or ignore them where the scanner allows it (Semgrep, `CodeQL`)
+    /// and report them all.
+    #[arg(long, value_enum, default_value_t = Suppressions::Honour)]
+    pub suppressions: Suppressions,
 }
 
 /// Arguments of `packs`.
@@ -128,6 +141,8 @@ mod tests {
         assert_eq!(args.semgrep_profile, Profile::Exhaustive);
         assert!(!args.offline);
         assert!(!args.no_dedup);
+        assert!(!args.comments);
+        assert_eq!(args.suppressions, Suppressions::Honour);
     }
 
     #[test]

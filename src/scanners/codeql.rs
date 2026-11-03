@@ -24,6 +24,7 @@ use super::{
 use crate::detect::{Detected, Language, Marker};
 use crate::exec::Output;
 use crate::model::{Confidence, Diagnostic, Finding, FlowKind, FlowStep, Severity};
+use crate::sweep::Suppressions;
 
 /// `CodeQL`, through `codeql database create` then `codeql database analyze`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -44,6 +45,9 @@ const NO_CODE: i32 = 32;
 const NO_CODE_TEXT: &str = "but not any written in";
 /// Where a query's help lives.
 const HELP: &str = "https://codeql.github.com/codeql-query-help/";
+/// The queries that turn `lgtm[…]` / `codeql[…]` comments into SARIF suppressions; a pack
+/// has one, both or neither, so each is checked with `codeql resolve queries` first.
+pub const SUPPRESSION_QUERIES: &[&str] = &["AlertSuppression.ql", "AlertSuppressionAnnotations.ql"];
 
 /// The `CodeQL` languages the target calls for, most files first — one per `CodeQL`
 /// language (JavaScript and TypeScript share one, Java and Kotlin another), the GitHub
@@ -93,16 +97,42 @@ impl CodeQl {
         args
     }
 
-    /// `codeql database analyze` with the language's `security-extended` suite, SARIF to
-    /// `sarif`; the query pack is downloaded when missing unless offline.
+    /// `codeql pack download` of the language's query pack (a no-op when cached).
     #[must_use]
-    pub fn analyze_args(db: &Path, language: &str, sarif: &Path, offline: bool) -> Vec<OsString> {
+    pub fn download_args(language: &str) -> Vec<OsString> {
+        let mut args = os_args(&["pack", "download"]);
+        args.push(format!("codeql/{language}-queries").into());
+        args
+    }
+
+    /// `codeql resolve queries` of one query of the language's pack: exit 0 when it exists.
+    #[must_use]
+    pub fn resolve_args(language: &str, query: &str) -> Vec<OsString> {
+        let mut args = os_args(&["resolve", "queries"]);
+        args.push(format!("codeql/{language}-queries:{query}").into());
+        args
+    }
+
+    /// `codeql database analyze` with the language's `security-extended` suite plus
+    /// `extra_queries` of the same pack, SARIF to `sarif`; the query pack is downloaded when
+    /// missing unless offline.
+    #[must_use]
+    pub fn analyze_args(
+        db: &Path,
+        language: &str,
+        sarif: &Path,
+        offline: bool,
+        extra_queries: &[&str],
+    ) -> Vec<OsString> {
         let mut args = os_args(&["database", "analyze"]);
         args.push(db.into());
         args.push(
             format!("codeql/{language}-queries:codeql-suites/{language}-security-extended.qls")
                 .into(),
         );
+        for query in extra_queries {
+            args.push(format!("codeql/{language}-queries:{query}").into());
+        }
         args.extend(os_args(&[
             "--format=sarif-latest",
             "--threads=0",
@@ -149,9 +179,16 @@ impl CodeQl {
                 failure_reason(&created)
             ));
         }
+        let suppression_queries = self.suppression_queries(ctx, language);
         ctx.log(format!("{language}: running the security-extended suite…"));
         let inv = ctx.invocation(
-            Self::analyze_args(&db, language, &sarif, ctx.options.offline),
+            Self::analyze_args(
+                &db,
+                language,
+                &sarif,
+                ctx.options.offline,
+                &suppression_queries,
+            ),
             &self.env(),
         );
         let analysed = ctx.run(&inv).map_err(|e| format!("{language}: {e}"))?;
@@ -168,6 +205,32 @@ impl CodeQl {
             .map_err(|e| format!("{language}: {e}"))?;
         merge(parsed, part, language);
         Ok(())
+    }
+}
+
+impl CodeQl {
+    /// The suppression queries the pack has, so that `lgtm[…]` / `codeql[…]` comments are
+    /// honoured like GitHub does; none when suppressions are to be ignored. The pack is
+    /// downloaded first (unless offline) since `resolve queries` only reads the cache.
+    fn suppression_queries(self, ctx: &mut Context<'_>, language: &str) -> Vec<&'static str> {
+        if ctx.options.suppressions == Suppressions::Ignore {
+            return Vec::new();
+        }
+        if !ctx.options.offline {
+            let inv = ctx.invocation(Self::download_args(language), &self.env());
+            if let Err(err) = ctx.run(&inv) {
+                ctx.log(format!("{language}: cannot download the query pack: {err}"));
+                return Vec::new();
+            }
+        }
+        SUPPRESSION_QUERIES
+            .iter()
+            .copied()
+            .filter(|query| {
+                let inv = ctx.invocation(Self::resolve_args(language, query), &self.env());
+                ctx.run(&inv).is_ok_and(|out| out.success())
+            })
+            .collect()
     }
 }
 
@@ -1110,7 +1173,20 @@ mod tests {
                 .any(|a| a.to_string_lossy().starts_with("--build-mode"))
         );
         let sarif = Path::new("/scratch/java.sarif");
-        let analyze = CodeQl::analyze_args(db, "java", sarif, false);
+        let analyze = CodeQl::analyze_args(db, "java", sarif, false, &["AlertSuppression.ql"]);
+        assert!(
+            analyze
+                .iter()
+                .any(|a| a == "codeql/java-queries:AlertSuppression.ql")
+        );
+        assert_eq!(
+            CodeQl::download_args("java"),
+            os_args(&["pack", "download", "codeql/java-queries"])
+        );
+        assert_eq!(
+            CodeQl::resolve_args("java", "X.ql"),
+            os_args(&["resolve", "queries", "codeql/java-queries:X.ql"])
+        );
         assert!(
             analyze
                 .iter()
@@ -1121,7 +1197,7 @@ mod tests {
         let at = analyze.iter().position(|a| a == "--output").unwrap();
         assert_eq!(analyze[at + 1], sarif.as_os_str());
         assert!(
-            !CodeQl::analyze_args(db, "java", sarif, true)
+            !CodeQl::analyze_args(db, "java", sarif, true, &[])
                 .iter()
                 .any(|a| a == "--download")
         );
@@ -1172,7 +1248,7 @@ mod tests {
 
     /// Answers `database create` and `database analyze` like `CodeQL` would, writing `sarif`
     /// where `--output` says; `create_code` is the exit code of every creation.
-    fn runner(
+    fn fake_codeql(
         sarif: &'static [u8],
         create_code: i32,
         create_stderr: &'static str,
@@ -1187,6 +1263,14 @@ mod tests {
             if args.get(1).map(String::as_str) == Some("create") {
                 return Ok(output(Some(create_code), b"", create_stderr));
             }
+            if args.first().map(String::as_str) == Some("pack") {
+                return Ok(output(Some(0), b"Already installed\n", ""));
+            }
+            if args.first().map(String::as_str) == Some("resolve") {
+                // Only the first suppression query exists in this fake pack.
+                let exists = args[2].ends_with(":AlertSuppression.ql");
+                return Ok(output(Some(if exists { 0 } else { 2 }), b"", ""));
+            }
             let at = args.iter().position(|a| a == "--output").unwrap();
             std::fs::write(&args[at + 1], sarif).unwrap();
             Ok(output(Some(0), b"", ""))
@@ -1195,7 +1279,7 @@ mod tests {
 
     #[test]
     fn execute_runs_create_then_analyze_per_language_and_merges() {
-        let runner = runner(FIXTURE, 0, "");
+        let runner = fake_codeql(FIXTURE, 0, "");
         let options = options_for(&[Language::JavaScript, Language::Python]);
         let mut log = Vec::new();
         let dir = tempfile::tempdir().unwrap();
@@ -1224,10 +1308,32 @@ mod tests {
             Some("python")
         );
         let calls = runner.calls();
-        assert_eq!(calls.len(), 4);
+        assert_eq!(
+            calls.len(),
+            10,
+            "create, pack download, 2 resolves, analyze per language"
+        );
         assert!(calls.iter().all(|c| c.cwd.as_deref() == Some(dir.path())));
         assert!(calls[0].args.iter().any(|a| a == "--language=javascript"));
-        assert!(calls[2].args.iter().any(|a| a == "--language=python"));
+        assert_eq!(calls[1].args[0], "pack");
+        assert_eq!(calls[2].args[0], "resolve");
+        assert_eq!(calls[3].args[0], "resolve");
+        assert!(
+            calls[4]
+                .args
+                .iter()
+                .any(|a| a == "codeql/javascript-queries:AlertSuppression.ql"),
+            "the query that exists is run: {:?}",
+            calls[4].args
+        );
+        assert!(
+            !calls[4]
+                .args
+                .iter()
+                .any(|a| a == "codeql/javascript-queries:AlertSuppressionAnnotations.ql"),
+            "the one that does not is not"
+        );
+        assert!(calls[5].args.iter().any(|a| a == "--language=python"));
         let db = calls[0].args[2].to_string_lossy().into_owned();
         assert!(
             db.starts_with(&dir.path().join("cache").to_string_lossy().into_owned()),
@@ -1250,7 +1356,7 @@ mod tests {
 
     #[test]
     fn a_language_without_code_is_a_diagnostic_and_the_rest_runs() {
-        let runner = runner(PYTHON, NO_CODE, NO_CODE_STDERR);
+        let runner = fake_codeql(PYTHON, NO_CODE, NO_CODE_STDERR);
         let options = options_for(&[Language::Ruby]);
         let mut log = Vec::new();
         let dir = tempfile::tempdir().unwrap();
@@ -1272,8 +1378,54 @@ mod tests {
     }
 
     #[test]
+    fn ignoring_suppressions_skips_the_pack_and_the_suppression_queries() {
+        let runner = fake_codeql(FIXTURE, 0, "");
+        let mut options = options_for(&[Language::Python]);
+        options.suppressions = Suppressions::Ignore;
+        let mut log = Vec::new();
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = Context::new(
+            "codeql",
+            PathBuf::from("/bin/codeql"),
+            dir.path(),
+            &options,
+            &runner,
+            &mut log,
+        );
+        assert!(matches!(CodeQl.execute(&mut ctx), Outcome::Completed(_)));
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 2, "create and analyze only");
+        assert!(
+            !calls[1]
+                .args
+                .iter()
+                .any(|a| a.to_string_lossy().contains("AlertSuppression"))
+        );
+
+        let offline_runner = fake_codeql(FIXTURE, 0, "");
+        let mut options = options_for(&[Language::Python]);
+        options.offline = true;
+        let mut ctx = Context::new(
+            "codeql",
+            PathBuf::from("/bin/codeql"),
+            dir.path(),
+            &options,
+            &offline_runner,
+            &mut log,
+        );
+        assert!(matches!(CodeQl.execute(&mut ctx), Outcome::Completed(_)));
+        let calls = offline_runner.calls();
+        assert_eq!(
+            calls.len(),
+            4,
+            "offline: no pack download, resolves still try the cache"
+        );
+        assert_eq!(calls[1].args[0], "resolve");
+    }
+
+    #[test]
     fn a_failed_extraction_fails_the_scan_when_nothing_else_ran() {
-        let runner = runner(PYTHON, 1, "ERROR: the extractor crashed");
+        let runner = fake_codeql(PYTHON, 1, "ERROR: the extractor crashed");
         let options = options_for(&[Language::Python]);
         let mut log = Vec::new();
         let dir = tempfile::tempdir().unwrap();

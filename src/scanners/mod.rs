@@ -36,6 +36,8 @@ pub struct ScanOptions {
     pub offline: bool,
     /// Standard error is a terminal: let the tool show its own progress (no `--quiet`).
     pub live: bool,
+    /// What to do with the inline comments that silence the tool.
+    pub suppressions: crate::sweep::Suppressions,
 }
 
 impl Default for ScanOptions {
@@ -46,6 +48,7 @@ impl Default for ScanOptions {
             detected: crate::detect::Detected::default(),
             offline: false,
             live: false,
+            suppressions: crate::sweep::Suppressions::Honour,
         }
     }
 }

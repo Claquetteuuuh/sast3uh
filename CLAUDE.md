@@ -43,6 +43,8 @@ sast3uh/
 │   │                    # codeql.rs (multi-step: database per language + analyze), plumber.rs,
 │   │                    # luacheck.rs (args, env, output → findings, mise id) — pure glue
 │   ├── detect.rs        # languages + markers of the target from file names (no reads)
+│   ├── sweep.rs         # --comments (TODO/FIXME/HACK…) and --suppressions (nosemgrep, bearer:disable…)
+│   │                    # passes over the target's text, after the scanners; no regex crate
 │   ├── packs.rs         # measured Semgrep pack catalogue, selection by language/profile
 │   ├── exec.rs          # THE process boundary: argv list, scrubbed env, cwd, timeout, cap
 │   ├── update.rs        # mise front-end: which / latest / ls --json / use -g, UpdatePlan
@@ -238,6 +240,16 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
   provider token is inherited (otherwise the report is "degraded": no score,
   no severity). A new scanner's adapter documents its own "most exhaustive"
   invocation in its `scan_args` (or `execute`).
+- Inline suppression comments (verified by running each tool): Semgrep
+  `nosemgrep`/`nosem` (same line or above; `--disable-nosem` turns them
+  off), Bearer `bearer:disable <rule>` on the line above (no switch), Trivy
+  `trivy:ignore:<id>` / `tfsec:ignore:<id>` on the line above (no switch;
+  `--show-suppressed` is for `.trivyignore` only), Luacheck `-- luacheck:`
+  inline options (the standalone 1.2.0 build has no `--no-inline`), CodeQL
+  `lgtm[…]` honoured only when the pack's `AlertSuppression*.ql` queries run
+  with the suite (`codeql[…]` needs `AlertSuppressionAnnotations.ql`),
+  Plumber has no inline comment. `src/sweep.rs` lists them; `--suppressions
+  ignore` is the opt-in to see what they hide.
 - Trivy masks the secrets it reports (`***`); the masked `Match` is the
   finding's message and the masked code lines its snippet — nothing else of
   a secret is ever kept.

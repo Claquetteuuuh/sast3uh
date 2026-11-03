@@ -16,6 +16,7 @@ use crate::model::{Finding, Report, ToolRun, ToolStatus};
 use crate::prompt::Prompter;
 use crate::scanners::Context;
 use crate::scanners::{self, Outcome, ScanOptions, Scanner};
+use crate::sweep::{self, Suppressions};
 use crate::tools::find_in_path;
 use crate::update::{Mise, UpdatePlan};
 use crate::version::Version;
@@ -49,6 +50,10 @@ pub struct Options {
     /// Echo each scanner's standard error to this process's as it runs, with a heartbeat
     /// when the tool is silent; for a terminal. The scanners then show their own progress.
     pub live: bool,
+    /// Sweep the target for comment markers (TODO, FIXME…) after the scanners.
+    pub comments: bool,
+    /// What to do with the inline comments that silence a scanner.
+    pub suppressions: Suppressions,
 }
 
 /// Silence after which a live run prints a `still running` line.
@@ -64,6 +69,8 @@ impl Default for Options {
             update: UpdatePolicy::Ask,
             dedup: true,
             live: false,
+            comments: false,
+            suppressions: Suppressions::Honour,
         }
     }
 }
@@ -198,6 +205,8 @@ pub fn scan(
     options.scan.detected = crate::detect::detect(&target, crate::detect::DEFAULT_MAX_FILES);
     options.scan.offline = !deps.online;
     options.scan.live = options.live;
+    options.scan.suppressions = options.suppressions;
+
     deps.log(format!(
         "target: {} — {}",
         target.display(),
@@ -210,6 +219,14 @@ pub fn scan(
         runs.push(run);
         findings.extend(found);
     }
+    let report_suppressions = options.suppressions != Suppressions::Honour;
+    if options.comments || report_suppressions {
+        for (run, found) in sweep_runs(&target, options.comments, report_suppressions, deps) {
+            runs.push(run);
+            findings.extend(found);
+        }
+    }
+
     let (findings, removed) = if options.dedup {
         let result = dedup::dedup(findings);
         (result.findings, result.removed)
@@ -352,6 +369,67 @@ fn refresh(
         None => deps.log(format!("{name}: updated, version unreadable")),
     }
     (path, now.or(installed))
+}
+
+/// sast3uh's own passes over the target (one walk for both), reported like scanners.
+fn sweep_runs(
+    target: &Path,
+    comments: bool,
+    suppressions: bool,
+    deps: &mut Deps<'_>,
+) -> Vec<(ToolRun, Vec<Finding>)> {
+    let wanted: Vec<&str> = [
+        comments.then_some(sweep::COMMENTS),
+        suppressions.then_some(sweep::SUPPRESSIONS),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    deps.log(format!("{}: sweeping…", wanted.join(" + ")));
+    let started = std::time::Instant::now();
+    let (found_comments, found_suppressions) = sweep::run(
+        target,
+        crate::detect::DEFAULT_MAX_FILES,
+        comments,
+        suppressions,
+    );
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let mut out = Vec::new();
+    for (name, swept, wanted) in [
+        (sweep::COMMENTS, found_comments, comments),
+        (sweep::SUPPRESSIONS, found_suppressions, suppressions),
+    ] {
+        if !wanted {
+            continue;
+        }
+        if swept.truncated {
+            deps.log(format!("{name}: stopped at the file cap"));
+        }
+        deps.log(format!(
+            "{name}: {} finding(s) in {} file(s), {duration_ms} ms",
+            swept.findings.len(),
+            swept.scanned_files
+        ));
+        let mut run = ToolRun::new(
+            name,
+            Some(env!("CARGO_PKG_VERSION").to_owned()),
+            ToolStatus::Completed,
+        );
+        run.findings = swept.findings.len();
+        run.duration_ms = duration_ms;
+        run.scanned_files = Some(swept.scanned_files);
+        run.skipped_paths = swept.skipped_paths;
+        if swept.truncated {
+            run.diagnostics.push(crate::model::Diagnostic {
+                level: "warning".to_owned(),
+                rule_id: None,
+                path: None,
+                message: "the walk stopped at the file cap".to_owned(),
+            });
+        }
+        out.push((run, swept.findings));
+    }
+    out
 }
 
 /// The parent-environment variables a scanner asked for, those that are set.
@@ -883,6 +961,79 @@ mod tests {
             "report never in the target: {out}"
         );
         assert!(!Path::new(&out).exists(), "scratch deleted after the run");
+    }
+
+    #[test]
+    fn sweeps_run_after_the_scanners_only_when_asked() {
+        let (_dir, path_var) = stub_path(&["luacheck"]);
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(
+            target.path().join("a.lua"),
+            "local x = 1 -- luacheck: ignore 211\n-- TODO: tidy\n",
+        )
+        .unwrap();
+        std::fs::write(target.path().join("b.py"), "eval(x)  # nosemgrep\n").unwrap();
+        let runner = FakeRunner::new(scripted);
+        let mut prompter = FixedAnswer(false);
+        let mut log = Vec::new();
+        let mut deps = Deps {
+            runner: &runner,
+            mise: None,
+            online: false,
+            prompter: &mut prompter,
+            path_var: Some(&path_var),
+            log: &mut log,
+        };
+        let options = Options {
+            tools: vec!["luacheck".into()],
+            comments: true,
+            suppressions: Suppressions::Report,
+            ..Options::default()
+        };
+        let report = scan(target.path(), &options, &mut deps).unwrap();
+        let names: Vec<&str> = report.tools.iter().map(|t| t.tool.as_str()).collect();
+        assert_eq!(names, vec!["luacheck", "comments", "suppressions"]);
+        assert_eq!(report.tools[1].findings, 1);
+        assert_eq!(report.tools[1].scanned_files, Some(2));
+        assert_eq!(
+            report.tools[1].version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(report.tools[1].status, ToolStatus::Completed);
+        assert_eq!(report.tools[2].findings, 2);
+        assert!(report.findings.iter().any(|f| f.tool == "comments"
+            && f.rule_id == "todo"
+            && f.path == Path::new("a.lua")
+            && f.line == Some(2)));
+        assert!(report.findings.iter().any(|f| f.tool == "suppressions"
+            && f.rule_id == "semgrep"
+            && f.path == Path::new("b.py")));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.tool == "suppressions" && f.rule_id == "luacheck")
+        );
+
+        let plain = Options {
+            tools: vec!["luacheck".into()],
+            ..Options::default()
+        };
+        let report = scan(target.path(), &plain, &mut deps).unwrap();
+        assert_eq!(report.tools.len(), 1, "no sweep by default");
+
+        let ignoring = Options {
+            tools: vec!["luacheck".into()],
+            suppressions: Suppressions::Ignore,
+            ..Options::default()
+        };
+        let report = scan(target.path(), &ignoring, &mut deps).unwrap();
+        let names: Vec<&str> = report.tools.iter().map(|t| t.tool.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["luacheck", "suppressions"],
+            "ignore reports the comments too"
+        );
     }
 
     // `Deps::mise` is an `Option`: the helper hands back exactly what the field takes.
