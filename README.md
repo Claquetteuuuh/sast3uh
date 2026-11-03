@@ -37,10 +37,18 @@ scan.
 straight from the GitHub release and keeps it updated:
 
 ```bash
-mise use -g github:Claquetteuuuh/sasteuuuh      # latest release, on your PATH
-mise use -g github:Claquetteuuuh/sasteuuuh@0.1.0 # or a pinned version
+mise use -g github:Claquetteuuuh/sasteuuuh@0.1.0   # a pinned version, on your PATH
+mise use -g github:Claquetteuuuh/sasteuuuh         # the newest release that is 24 h old
 sasteuuuh --version
 ```
+
+mise hides a release younger than its `minimum_release_age` (24 h by
+default) from `@latest`: the day a version comes out, `mise use` without a
+version answers "no versions found … eligible tomorrow". That is the same
+cooldown this project's Dependabot applies to its own dependencies — keep
+it, and pin the version instead. sasteuuuh itself always installs scanners
+with an explicit version (`mise use -g <tool>@<version>`), so it is never
+held back by it.
 
 ### 2. Prebuilt binary from a release
 
