@@ -433,9 +433,14 @@ fn run_diagnostics(root: &Root, unscored: bool, parsed: &mut Parsed) {
     }
 }
 
-/// `file:line` → (file, line); a `:suffix` that is not a number stays in the file.
+/// `file:line` or `file:line (note)` → (file, line); a `:suffix` that is not a number
+/// stays in the file.
 fn split_location(text: &str) -> (String, Option<u32>) {
-    if let Some((file, line)) = text.rsplit_once(':')
+    let head = match text.split_once(" (") {
+        Some((head, note)) if note.ends_with(')') => head,
+        _ => text,
+    };
+    if let Some((file, line)) = head.rsplit_once(':')
         && let Ok(line) = line.parse::<u32>()
     {
         return (file.to_owned(), Some(line));
@@ -876,6 +881,16 @@ mod tests {
         );
         assert_eq!(split_location("a/b.yml"), ("a/b.yml".to_owned(), None));
         assert_eq!(split_location("C:no"), ("C:no".to_owned(), None));
+        assert_eq!(
+            split_location(
+                ".github/workflows/x.yml:133 (docker/build-push-action@v7 via org/repo/.github/workflows/g.yml@main)"
+            ),
+            (".github/workflows/x.yml".to_owned(), Some(133))
+        );
+        assert_eq!(
+            split_location("a.yml (note)"),
+            ("a.yml (note)".to_owned(), None)
+        );
         assert_eq!(
             relative_path("/home/x/repo/.github/workflows/ci.yml"),
             PathBuf::from(".github/workflows/ci.yml")

@@ -33,6 +33,9 @@ struct ExactKey {
     path: PathBuf,
     line: Option<u32>,
     column: Option<u32>,
+    /// Two findings of one rule at one place with different messages are two findings
+    /// (Trivy names a package per license finding of a lockfile, which has no line).
+    message: String,
 }
 
 #[derive(Hash, PartialEq, Eq, Clone)]
@@ -56,6 +59,7 @@ pub fn dedup(input: Vec<Finding>) -> Deduplicated {
             path: finding.path.clone(),
             line: finding.line,
             column: finding.column,
+            message: finding.message.clone(),
         };
         if !exact.insert(key) {
             removed += 1;
@@ -198,6 +202,18 @@ mod tests {
         let result = dedup(vec![a.clone(), a.clone(), a.clone()]);
         assert_eq!(result.findings, vec![a]);
         assert_eq!(result.removed, 2);
+    }
+
+    #[test]
+    fn same_rule_at_the_same_place_with_another_message_is_kept() {
+        let mut a = finding("trivy", "MIT", Severity::Low, "package-lock.json", 0);
+        a.line = None;
+        a.message = "left-pad is under the MIT license".to_owned();
+        let mut b = a.clone();
+        b.message = "lodash is under the MIT license".to_owned();
+        let result = dedup(vec![a.clone(), b, a]);
+        assert_eq!(result.findings.len(), 2);
+        assert_eq!(result.removed, 1);
     }
 
     #[test]

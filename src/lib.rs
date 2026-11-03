@@ -177,7 +177,13 @@ fn scan(args: &ScanArgs, out: &mut impl Write, deps: &mut Deps<'_>) -> anyhow::R
     let scan_options = ScanOptions {
         semgrep_configs: (!args.semgrep_configs.is_empty()).then(|| args.semgrep_configs.clone()),
         semgrep_profile: args.semgrep_profile,
-        license_full: args.license_full,
+        licenses: if args.license_full {
+            scanners::Licenses::Full
+        } else if args.licenses {
+            scanners::Licenses::Packages
+        } else {
+            scanners::Licenses::Off
+        },
         ..ScanOptions::default()
     };
     let options = pipeline::Options {

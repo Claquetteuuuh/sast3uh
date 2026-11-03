@@ -226,7 +226,8 @@ The tool is worth exactly what its parsers keep. Every adapter follows these:
   overlapping packs, 0 duplicate findings), so overlap costs download time
   only — selecting by language is what keeps a scan fast.
 - Bearer runs `--scanner sast,secrets`; Trivy runs `fs --scanners
-  vuln,misconfig,secret,license --include-dev-deps` (plus
+  vuln,misconfig,secret --include-dev-deps` (`,license` with `--licenses`
+  or `--license-full`: package licenses are noise in a security report, plus
     `--detection-priority comprehensive` in the exhaustive profile,
   `--license-full` only with the flag of that name — a project's own GPL
   headers are "restricted" in Trivy's policy, one high finding per file —

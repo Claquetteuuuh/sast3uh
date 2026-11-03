@@ -14,8 +14,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    Outcome, ParseError, Parsed, ScanOptions, Scanner, Strings, TEXT_CAP, cap, cwe_number, cwes,
-    failure_reason, first_json, null_default, os_args, push_unique, value_text,
+    Licenses, Outcome, ParseError, Parsed, ScanOptions, Scanner, Strings, TEXT_CAP, cap,
+    cwe_number, cwes, failure_reason, first_json, null_default, os_args, push_unique, value_text,
 };
 use crate::exec::Output;
 use crate::model::{Diagnostic, Finding, Severity, normalize_reported_path};
@@ -49,9 +49,14 @@ impl Scanner for Trivy {
     fn scan_args(&self, options: &ScanOptions) -> Vec<OsString> {
         let mut args = os_args(&[
             "fs",
-            // Every engine Trivy has.
             "--scanners",
-            "vuln,misconfig,secret,license",
+            // Licenses on request only: one low "notice" finding per MIT package of a
+            // lockfile is not what a security report is for.
+            if options.licenses == Licenses::Off {
+                "vuln,misconfig,secret"
+            } else {
+                "vuln,misconfig,secret,license"
+            },
             "--include-dev-deps",
             "--format",
             "json",
@@ -68,7 +73,7 @@ impl Scanner for Trivy {
             // More detections at the cost of precision.
             args.extend(os_args(&["--detection-priority", "comprehensive"]));
         }
-        if options.license_full {
+        if options.licenses == Licenses::Full {
             // Licenses read from every file header, not only from package metadata: opt-in,
             // because Trivy then flags the project's own license (GPL is "restricted" in its
             // default policy) on each of its files.
@@ -94,11 +99,15 @@ impl Scanner for Trivy {
     }
 
     fn plan(&self, options: &ScanOptions) -> Option<String> {
-        let mut parts = vec!["vuln, misconfig, secret and license scanners".to_owned()];
+        let mut parts = vec![if options.licenses == Licenses::Off {
+            "vuln, misconfig and secret scanners".to_owned()
+        } else {
+            "vuln, misconfig, secret and license scanners".to_owned()
+        }];
         if options.semgrep_profile == Profile::Exhaustive {
             parts.push("comprehensive detection".to_owned());
         }
-        if options.license_full {
+        if options.licenses == Licenses::Full {
             parts.push("licenses from every file header".to_owned());
         }
         if options.offline {
@@ -958,7 +967,29 @@ mod tests {
         assert_eq!(args[0], "fs");
         assert!(
             args.windows(2)
+                .any(|w| w == ["--scanners", "vuln,misconfig,secret"]),
+            "licenses are opt-in"
+        );
+        let licensed = ScanOptions {
+            licenses: Licenses::Packages,
+            ..ScanOptions::default()
+        };
+        let licensed_args: Vec<String> = Trivy
+            .scan_args(&licensed)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            licensed_args
+                .windows(2)
                 .any(|w| w == ["--scanners", "vuln,misconfig,secret,license"])
+        );
+        assert!(Trivy.plan(&licensed).unwrap().contains("license"));
+        assert!(
+            !Trivy
+                .plan(&ScanOptions::default())
+                .unwrap()
+                .contains("license")
         );
         assert!(args.windows(2).any(|w| w == ["--exit-code", "0"]));
         assert!(
@@ -970,7 +1001,7 @@ mod tests {
             "file-header licenses are opt-in"
         );
         let full = ScanOptions {
-            license_full: true,
+            licenses: Licenses::Full,
             ..ScanOptions::default()
         };
         let full_args: Vec<String> = Trivy
@@ -979,6 +1010,12 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert!(full_args.contains(&"--license-full".to_owned()));
+        assert!(
+            full_args
+                .windows(2)
+                .any(|w| w == ["--scanners", "vuln,misconfig,secret,license"]),
+            "file headers imply the license scanner"
+        );
         assert!(Trivy.plan(&full).unwrap().contains("every file header"));
         assert!(!args.contains(&"--skip-db-update".to_owned()));
         assert_eq!(args.last().map(String::as_str), Some("."));

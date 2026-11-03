@@ -96,9 +96,14 @@ pub struct ScanArgs {
     #[arg(long, value_enum, default_value_t = Suppressions::Honour)]
     pub suppressions: Suppressions,
 
-    /// Trivy: also classify the license of every source file header (off by default: a
-    /// project's own license, GPL for one, is "restricted" in Trivy's policy and would be
-    /// reported on each of its files).
+    /// Trivy: also report the license of every package of the lockfiles (off by default:
+    /// one low "notice" finding per MIT package is not a security finding).
+    #[arg(long)]
+    pub licenses: bool,
+
+    /// Trivy: also classify the license of every source file header (implies --licenses;
+    /// off by default: a project's own license, GPL for one, is "restricted" in Trivy's
+    /// policy and would be reported on each of its files).
     #[arg(long)]
     pub license_full: bool,
 }
@@ -153,6 +158,7 @@ mod tests {
         assert!(!args.comments);
         assert_eq!(args.suppressions, Suppressions::Honour);
         assert!(!args.license_full);
+        assert!(!args.licenses);
     }
 
     #[test]

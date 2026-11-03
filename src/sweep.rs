@@ -75,6 +75,9 @@ pub struct Suppression {
 }
 
 const PROSE: &[&str] = &["md", "markdown", "txt", "rst", "adoc", "asciidoc", "org"];
+/// Files no marker is looked for in: translation catalogues (`msgid "To do"`, Spanish
+/// `todo`), compiled catalogues, lockfiles.
+const NOT_CODE: &[&str] = &["po", "pot", "mo", "lock"];
 
 /// Every suppression comment known, most specific spelling first.
 pub const SUPPRESSION_MARKERS: &[Suppression] = &[
@@ -317,6 +320,14 @@ pub fn run(root: &Path, max_files: usize, comments: bool, suppressions: bool) ->
             .map(|e| e.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default();
         let allowed = allowed_suppressions(&extension);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        // A minified bundle is somebody else's code, on one line.
+        let code = !NOT_CODE.contains(&extension.as_str()) && !name.contains(".min.");
+        let comments = comments && code;
+        let allowed = if code { allowed } else { 0 };
         for (index, line) in text.lines().enumerate() {
             let number = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
             lower.clear();
@@ -589,9 +600,12 @@ mod tests {
             ("c.txt", "xxx\n"),
             ("node_modules/d.js", "// TODO ignored\n"),
             ("bin.dat", "TODO\0binary\n"),
+            ("locales/es_ES.po", "msgid \"To do\"\nmsgstr \"todo\"\n"),
+            ("public/lib/app.min.js", "/* TODO minified */x=1\n"),
+            ("Cargo.lock", "# TODO\n"),
         ]);
         let swept = comments(dir.path(), 1000);
-        assert_eq!(swept.scanned_files, 3);
+        assert_eq!(swept.scanned_files, 6);
         assert_eq!(swept.skipped_paths.len(), 1);
         assert_eq!(swept.skipped_paths[0].reason, "binary");
         let hits: Vec<(String, u32, &str)> = swept
@@ -664,6 +678,7 @@ mod tests {
             ("h.txt", "This LGTM, nosec is a word here\n"),
             ("i.md", "luacheck: ignore is not for prose\n"),
             ("j.py", "nosemantics = 1\nnoqa_list = []\n"),
+            ("k.po", "msgid \"nosemgrep\"\n"),
         ]);
         let swept = suppressions(dir.path(), 1000);
         let hits: Vec<(String, u32, String, Option<String>)> = swept
@@ -713,7 +728,7 @@ mod tests {
         assert!(
             !hits
                 .iter()
-                .any(|h| h.0 == "h.txt" || h.0 == "i.md" || h.0 == "j.py")
+                .any(|h| matches!(h.0.as_str(), "h.txt" | "i.md" | "j.py" | "k.po"))
         );
         let first = &swept.findings[0];
         assert_eq!(first.tool, SUPPRESSIONS);

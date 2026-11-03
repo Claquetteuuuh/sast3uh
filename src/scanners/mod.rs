@@ -38,8 +38,21 @@ pub struct ScanOptions {
     pub live: bool,
     /// What to do with the inline comments that silence the tool.
     pub suppressions: crate::sweep::Suppressions,
-    /// Trivy: classify the license of every file header, not only of packages.
-    pub license_full: bool,
+    /// Trivy: how far the license scanner goes.
+    pub licenses: Licenses,
+}
+
+/// How far Trivy's license scanner goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Licenses {
+    /// Not run: one low "notice" finding per MIT package is not a security finding.
+    #[default]
+    Off,
+    /// The license of every package of the lockfiles (`--licenses`).
+    Packages,
+    /// Packages, and the license of every file header (`--license-full`); a project's own
+    /// license (GPL is "restricted" in Trivy's policy) is then reported on each of its files.
+    Full,
 }
 
 impl Default for ScanOptions {
@@ -51,7 +64,7 @@ impl Default for ScanOptions {
             offline: false,
             live: false,
             suppressions: crate::sweep::Suppressions::Honour,
-            license_full: false,
+            licenses: Licenses::Off,
         }
     }
 }
