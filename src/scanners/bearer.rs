@@ -23,14 +23,22 @@ use crate::version::Version;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Bearer;
 
-/// What Bearer says when the tree holds no file in a language it has rules for: on stderr
-/// ("0 rules found for supported language") or, with a report format, in the report itself
-/// ("Zero rules found. A security report requires rules to function").
+/// What Bearer says when the tree holds no file in a language it supports: on stderr
+/// ("0 rules found for supported language"), or in the report itself with a report format
+/// ("Zero rules found. A security report requires rules to function" up to 2.1.1, "The
+/// security report is not yet available for your application. Learn more about language
+/// support…" from 2.1.3).
 fn says_no_rules(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.contains("0 rules found")
-        || lower.contains("zero rules found")
-        || lower.contains("requires rules")
+    [
+        "0 rules found",
+        "zero rules found",
+        "requires rules",
+        "not yet available for your application",
+        "language support",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 impl Scanner for Bearer {
@@ -555,6 +563,21 @@ mod tests {
         // Bearer 2.1.3 with a report format: nothing on stderr, the text in the report.
         let report = b"\nSecurity Report\n\n=====================================\n\nZero rules found. A security report requires rules to function. Please check configuration.\n";
         match Bearer.interpret(&output(Some(1), report, "")) {
+            Outcome::Skipped(reason) => assert!(reason.contains("no file"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn interpret_skips_on_the_not_yet_available_notice_of_2_1_3() {
+        // Recorded from Bearer 2.1.3 on a Rust-only tree with an empty cache: exit 1, nothing
+        // useful on stderr, this text where the report should be.
+        let report = b"\nThe security report is not yet available for your application.\nLearn more about language support at https://docs.bearer.com/reference/supported-languages/\n";
+        match Bearer.interpret(&output(
+            Some(1),
+            report,
+            "Analyzing codebase\nLoading rules\nEvaluating rules\n",
+        )) {
             Outcome::Skipped(reason) => assert!(reason.contains("no file"), "{reason}"),
             other => panic!("{other:?}"),
         }
