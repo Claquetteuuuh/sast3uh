@@ -1,0 +1,48 @@
+# ──────────────────────────────────────────────────────────────────────
+# Plumber — CI/CD trust policy (https://github.com/getplumber/plumber)
+# Pinned SHAs that exist upstream and match their comments, authorised
+# action sources, permissions, triggers, Dependabot cooldown, SECURITY.md,
+# SAST present… Runs on every push: it also audits repository settings.
+# Any finding fails (min-points 100). Locally the same check runs on every
+# commit (pre-commit hook `plumber`, through the version pinned in
+# .mise.toml).
+# ──────────────────────────────────────────────────────────────────────
+name: "🪠 Plumber"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Tuesday 4:30 AM UTC — stale pins and new advisories on actions.
+    - cron: "30 4 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plumber:
+    name: Plumber pipeline audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # workflow states and one run log, to prove the token scope
+      security-events: write # SARIF upload to the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The action uploads its own `plumber-report` artifact (JSON, PBOM, CycloneDX).
+      - name: Run Plumber
+        uses: getplumber/plumber@2342834dc0b67d2c87a33ac86789e481ad869402 # v0.7.17
+        with:
+          # Any finding fails.
+          min-points: 100
+          fail-warnings: true

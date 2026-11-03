@@ -139,13 +139,14 @@ repos:
         pass_filenames: false
 
       # Plumber: CI/CD pipeline security (actions pinned, permissions,
-      # triggers, Dependabot cooldown, SECURITY.md…). Reads the repository
-      # settings with the gh CLI token; any finding fails.
+      # triggers, Dependabot cooldown, SECURITY.md…). Runs on every commit,
+      # through the version pinned in .mise.toml (the same as CI), with the
+      # gh CLI token for the repository settings; any finding fails.
       - id: plumber
         name: plumber analyze
         language: system
-        entry: sh -c 'GH_TOKEN="$(gh auth token)" plumber analyze --min-points 100 --print=false'
-        files: ^(\.github/|\.plumber\.yaml|SECURITY\.md)
+        entry: sh -c 'GH_TOKEN="$(gh auth token)" mise exec -- plumber analyze --min-points 100 --print=false'
+        always_run: true
         pass_filenames: false
 
       # ── pre-push: the slow ones ──────────────────────────────────────

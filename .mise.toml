@@ -1,0 +1,4 @@
+# Tools the commit gate runs through mise (`mise exec -- <tool>`), pinned so
+# every clone and every developer run the same version as CI.
+[tools]
+"github:getplumber/plumber" = "0.7.17"
